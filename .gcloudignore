@@ -1,0 +1,63 @@
+# Este archivo especifica qué archivos NO subir a Cloud Functions
+# Similar a .gitignore pero para Google Cloud
+
+# Git
+.git
+.gitignore
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+env/
+venv/
+ENV/
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+
+# Archivos de entorno
+.env
+.env.local
+*.env
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Testing
+.pytest_cache/
+.coverage
+htmlcov/
+*.log
+
+# Documentación
+README.md
+docs/
+
+# Credenciales (NUNCA subir credenciales)
+credentials.json
+service-account-key.json
+*.pem
+*.key
+
+# Otros
+.DS_Store
+Thumbs.db

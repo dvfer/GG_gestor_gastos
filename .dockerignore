@@ -1,0 +1,52 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+env/
+venv/
+.venv/
+ENV/
+*.egg-info/
+.eggs/
+dist/
+build/
+
+# Git
+.git
+.gitignore
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Testing
+.pytest_cache/
+.coverage
+htmlcov/
+*.log
+
+# Documentación
+README.md
+docs/
+
+# Credenciales locales
+.env
+.env.local
+*.env
+credentials.json
+service-account-key.json
+*.pem
+*.key
+
+# Otros
+.DS_Store
+Thumbs.db
+
+# UV
+.uv/
+uv.lock
+pyproject.toml

@@ -1,0 +1,24 @@
+# Configuración de dependencias para uv
+# Este es un proyecto de aplicación, no una librería
+# No requiere build system
+
+[project]
+name = "gg-gestor-gastos"
+version = "0.1.0"
+description = "API con FastAPI para gestionar gastos con integración a Google Sheets (Cloud Run)"
+requires-python = ">=3.11"
+dependencies = [
+    "fastapi>=0.109.0",
+    "uvicorn[standard]>=0.27.0",
+    "google-api-python-client>=2.108.0",
+    "google-auth>=2.25.2",
+    "google-auth-httplib2>=0.2.0",
+    "google-auth-oauthlib>=1.2.0",
+    "pydantic>=2.5.0",
+]
+
+[dependency-groups]
+dev = [
+    "pytest>=7.4.0",
+    "python-dotenv>=1.0.0",
+]

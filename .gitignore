@@ -1,0 +1,49 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+env/
+venv/
+ENV/
+.venv/
+*.egg-info/
+.eggs/
+dist/
+build/
+
+# uv
+.uv/
+uv.lock
+
+# Entorno
+.env
+.env.local
+*.env
+
+# Credenciales - MUY IMPORTANTE
+credentials.json
+service-account-key.json
+*.pem
+*.key
+.gcp-credentials/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Testing
+.pytest_cache/
+.coverage
+htmlcov/
+*.log
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Cloud Functions local
+.functions-framework-*
