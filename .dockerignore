@@ -37,8 +37,6 @@ docs/
 .env
 .env.local
 *.env
-credentials.json
-service-account-key.json
 *.pem
 *.key
 
@@ -50,3 +48,11 @@ Thumbs.db
 .uv/
 uv.lock
 pyproject.toml
+
+samples/
+
+# Datos personales locales
+*.db
+*.db-wal
+*.db-shm
+gg-config*.json

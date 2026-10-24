@@ -21,13 +21,11 @@ uv.lock
 .env
 .env.local
 *.env
+imap/config.json
 
-# Credenciales - MUY IMPORTANTE
-credentials.json
-service-account-key.json
+# Credenciales
 *.pem
 *.key
-.gcp-credentials/
 
 # IDE
 .vscode/
@@ -45,5 +43,16 @@ htmlcov/
 .DS_Store
 Thumbs.db
 
-# Cloud Functions local
-.functions-framework-*
+# Ledger SQLite local
+*.db
+*.db-wal
+*.db-shm
+
+# Estados de cuenta y otros datos personales de prueba
+samples/
+
+# Export de configuración (contiene comercios/montos personales)
+gg-config*.json
+
+# Configuración local de Claude Code / openspec
+.claude/
