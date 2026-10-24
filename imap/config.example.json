@@ -1,0 +1,12 @@
+{
+  "senders": [
+    {
+      "address": "enviodigital@bancochile.cl",
+      "parser": "banco_chile"
+    },
+    {
+      "address": "serviciodetransferencias@bancochile.cl",
+      "parser": "banco_chile_transferencias"
+    }
+  ]
+}
