@@ -1,0 +1,118 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>GG · Configuración</title>
+<link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+<nav><h1>GG · Gestor de Gastos</h1><a href="/dashboard">Dashboard</a><a href="/movements">Movimientos</a><a href="/statements-view">Estados de cuenta</a><a href="/config" aria-current="page">Configuración</a></nav>
+
+<div class="grid">
+  <div class="card wide">
+    <h2>Tarjetas y cuentas</h2>
+    <p class="muted">El tipo define qué movimientos entran en la proyección de cuotas (solo crédito) y manda sobre lo que detecte el correo.
+      Las tarjetas aparecen solas al llegar movimientos; "detectado" significa que aún no la configuras.</p>
+    <table>
+      <thead><tr><th>Número</th><th>Nombre</th><th>Tipo</th><th class="num">Movimientos</th><th></th></tr></thead>
+      <tbody id="cards"></tbody>
+    </table>
+  </div>
+
+  <div class="card wide">
+    <h2>Reglas de categorización</h2>
+    <p class="muted">Si el comercio, o el detalle de una transferencia (asunto/mensaje, ej. "ahorro vivienda"), contiene el patrón (sin distinguir mayúsculas), se asigna la categoría. Gana el patrón más largo;
+      una categoría puesta a mano en un movimiento manda sobre las reglas. Edita cualquier campo de la tabla y se guarda al salir de él.
+      La subcategoría es opcional y agrupa dentro de la categoría (ej. Ocio → Tocata, Ocio → PC).</p>
+    <form class="inline" id="rule-form">
+      <input name="pattern" placeholder="Comercio contiene… (ej. UBER)" required minlength="2" aria-label="Patrón">
+      <input name="category" placeholder="Categoría (ej. Ocio)" list="categories" required aria-label="Categoría">
+      <input name="subcategory" placeholder="Subcategoría, opcional (ej. Tocata)" aria-label="Subcategoría">
+      <button>Guardar regla</button>
+    </form>
+    <table><thead><tr><th>Patrón</th><th>Categoría</th><th>Subcategoría</th><th></th></tr></thead><tbody id="rules"></tbody></table>
+  </div>
+</div>
+<datalist id="categories"></datalist>
+<datalist id="subcategories"></datalist>
+
+<script src="/static/common.js"></script>
+<script>
+async function loadCards() {
+  const cards = await api('/cards');
+  document.getElementById('cards').replaceChildren(...cards.map(c => {
+    const label = el('input', { value: c.label ?? '', placeholder: 'ej. Visa Signature', maxLength: 40 });
+    label.setAttribute('aria-label', `Nombre de ${c.card_type}`);
+    const type = el('select', {},
+      el('option', { value: '1', textContent: 'Crédito', selected: !!c.is_credit }),
+      el('option', { value: '0', textContent: 'Débito / cuenta', selected: !c.is_credit }));
+    type.setAttribute('aria-label', `Tipo de ${c.card_type}`);
+    const status = el('span', { className: 'muted', textContent: c.configured ? '' : 'detectado' });
+    const save = async () => {
+      await api('/cards', { method: 'PUT', body: JSON.stringify(
+        { card_type: c.card_type, label: label.value, is_credit: type.value === '1' }) });
+      status.textContent = 'guardado';
+    };
+    label.onchange = type.onchange = () => save().catch(err => alert(err.message));
+    return el('tr', {},
+      el('td', { textContent: c.card_type }), el('td', {}, label), el('td', {}, type),
+      el('td', { className: 'num', textContent: c.movements }), el('td', {}, status));
+  }));
+}
+
+let subIndex = {};
+const ruleForm = document.getElementById('rule-form');
+linkSubcategory(ruleForm.subcategory, () => ruleForm.category.value, () => subIndex);
+
+async function loadRules() {
+  const rules = await api('/rules');
+  document.getElementById('rules').replaceChildren(...rules.map(r => {
+    const input = (value, list, label, required) => {
+      const i = el('input', { value: value ?? '', required, maxLength: 60, placeholder: required ? '' : '—' });
+      if (list) i.setAttribute('list', list);
+      i.setAttribute('aria-label', `${label} de la regla ${r.pattern}`);
+      return i;
+    };
+    const pattern = input(r.pattern, null, 'Patrón', true);
+    pattern.minLength = 2;
+    const category = input(r.category, 'categories', 'Categoría', true);
+    const subcategory = input(r.subcategory, null, 'Subcategoría', false);
+    linkSubcategory(subcategory, () => category.value, () => subIndex);
+    const status = el('span', { className: 'muted' });
+    // Se guarda al salir de cualquier campo; old_pattern permite renombrar el patrón
+    pattern.onchange = category.onchange = subcategory.onchange = async () => {
+      if (![pattern, category].every(i => i.reportValidity())) return;
+      try {
+        await api('/rules', { method: 'PUT', body: JSON.stringify({ old_pattern: r.pattern,
+          pattern: pattern.value, category: category.value, subcategory: subcategory.value }) });
+        r.pattern = pattern.value.trim();
+        status.textContent = 'guardado';
+      } catch (err) {
+        alert(err.message);
+        pattern.value = r.pattern;
+      }
+    };
+    const del = el('button', { textContent: 'Eliminar' });
+    del.onclick = async () => { await api(`/rules/${encodeURIComponent(r.pattern)}`, { method: 'DELETE' }); loadRules(); };
+    return el('tr', {}, el('td', {}, pattern), el('td', {}, category), el('td', {}, subcategory),
+      el('td', {}, del, ' ', status));
+  }));
+  const fill = (id, values) => document.getElementById(id).replaceChildren(
+    ...[...new Set(values.filter(Boolean))].sort().map(v => el('option', { value: v })));
+  fill('categories', rules.map(r => r.category));
+  subIndex = subcategoryIndex(rules);
+}
+
+document.getElementById('rule-form').onsubmit = async e => {
+  e.preventDefault();
+  const f = new FormData(e.target);
+  await api('/rules', { method: 'PUT', body: JSON.stringify({ pattern: f.get('pattern'), category: f.get('category'), subcategory: f.get('subcategory') }) });
+  e.target.reset();
+  loadRules();
+};
+
+Promise.all([loadCards(), loadRules()]).catch(err => alert(err.message));
+</script>
+</body>
+</html>

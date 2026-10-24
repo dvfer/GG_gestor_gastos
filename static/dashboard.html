@@ -1,0 +1,228 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>GG · Gastos</title>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.4/dist/chart.umd.min.js"></script>
+<link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+<nav><h1>GG · Gestor de Gastos</h1><a href="/dashboard" aria-current="page">Dashboard</a><a href="/movements">Movimientos</a><a href="/statements-view">Estados de cuenta</a><a href="/config">Configuración</a></nav>
+
+<div class="tiles">
+  <div class="card tile"><div class="label">Gasto este mes</div><div class="value" id="kpi-month">—</div></div>
+  <div class="card tile"><div class="label">Gasto mes anterior</div><div class="value" id="kpi-prev">—</div></div>
+  <div class="card tile"><div class="label">Ahorro/Inversión este mes</div><div class="value" id="kpi-savings">—</div>
+    <div class="label" id="kpi-savings-prev"></div></div>
+  <div class="card tile"><div class="label" id="kpi-next-label">Próximo pago de tarjeta</div><div class="value" id="kpi-next">—</div></div>
+  <div class="card tile"><div class="label">Total cuotas por pagar</div><div class="value" id="kpi-debt">—</div></div>
+</div>
+
+<div class="grid">
+  <div class="card wide"><div class="toolbar"><h2 style="margin:0">Gasto mensual por categoría</h2>
+    <select id="months" aria-label="Período del gráfico">
+      <option value="6" selected>Últimos 6 meses</option>
+      <option value="12">Últimos 12 meses</option>
+      <option value="24">Últimos 24 meses</option>
+    </select></div><div class="chart"><canvas id="c-monthly" aria-label="Gasto mensual por categoría" role="img"></canvas></div></div>
+  <div class="card wide"><h2 id="pie-title">Distribución del mes: débito vs crédito</h2>
+    <p class="muted">Débito es plata que ya salió de tu cuenta; crédito es deuda que pagarás después (en una o más cuotas).</p>
+    <div class="pies">
+      <div><h3 id="pie-debit-title">Débito</h3><div class="chart"><canvas id="c-pie-debit" aria-label="Gasto con débito del mes actual por categoría" role="img"></canvas></div></div>
+      <div><h3 id="pie-credit-title">Crédito</h3><div class="chart"><canvas id="c-pie-credit" aria-label="Gasto con crédito del mes actual por categoría" role="img"></canvas></div></div>
+    </div></div>
+  <div class="card"><div class="toolbar"><h2 id="cat-title" style="margin:0">Categorías del mes</h2>
+    <select id="cat-filter" aria-label="Ver subcategorías de"><option value="">Todas las categorías</option></select></div><div class="chart"><canvas id="c-cats" aria-label="Gasto por categoría del mes actual" role="img"></canvas></div></div>
+  <div class="card"><h2>Pagos de tarjeta de crédito por mes de vencimiento</h2>
+    <p class="muted" id="proj-basis"></p><div class="chart"><canvas id="c-proj" aria-label="Cuotas por pagar por mes" role="img"></canvas></div></div>
+</div>
+
+<script src="/static/common.js"></script>
+<script>
+const clp = new Intl.NumberFormat('es-CL', { style: 'currency', currency: 'CLP', maximumFractionDigits: 0 });
+const css = n => getComputedStyle(document.documentElement).getPropertyValue(n).trim();
+const SERIES = ['--s1','--s2','--s3','--s4','--s5','--s6','--s7'];  // 8º slot = "Otros" (gris)
+const MAX_CATS = SERIES.length;
+const monthLabel = ym => new Date(+ym.slice(0,4), +ym.slice(5,7) - 1, 1)
+  .toLocaleDateString('es-CL', { month: 'short', year: '2-digit' });
+const ym = d => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
+const charts = {};
+// ponytail: nombre fijo de la categoría de ahorro; hacerlo configurable si se renombra
+const SAVINGS_CATEGORY = 'Ahorro/Inversión';
+
+function baseOptions(extra = {}) {
+  const muted = css('--muted'), grid = css('--grid');
+  return {
+    responsive: true, maintainAspectRatio: false, animation: false,
+    interaction: { mode: 'index', intersect: false },
+    plugins: {
+      legend: { position: 'top', align: 'start', labels: { color: css('--ink-2'), boxWidth: 12, boxHeight: 12 } },
+      tooltip: { callbacks: { label: c => `${c.dataset.label ?? ''}${c.dataset.label ? ': ' : ''}${clp.format(c.chart.options.indexAxis === 'y' ? c.parsed.x : c.parsed.y)}` } },
+    },
+    scales: {
+      x: { grid: { display: false }, border: { color: css('--axis') }, ticks: { color: muted } },
+      y: { beginAtZero: true, grid: { color: grid }, border: { display: false },
+           ticks: { color: muted, callback: v => clp.format(v) } },
+    },
+    ...extra,
+  };
+}
+
+function draw(id, config) {
+  charts[id]?.destroy();
+  charts[id] = new Chart(document.getElementById(id), config);
+}
+
+let currentMonth = [];
+
+// Categorías del mes actual (barra horizontal, una serie → sin leyenda). Con una categoría
+// elegida (selector o clic en la barra) muestra sus subcategorías.
+function drawCats() {
+  const filter = document.getElementById('cat-filter');
+  const cat = filter.value;
+  const sums = {};
+  currentMonth.filter(r => !cat || r.category === cat).forEach(r => {
+    const k = cat ? (r.subcategory ?? 'Sin subcategoría') : r.category;
+    sums[k] = (sums[k] || 0) + r.total;
+  });
+  const labels = Object.keys(sums).sort((a, b) => sums[b] - sums[a]);
+  const hOpts = baseOptions({ indexAxis: 'y' });
+  hOpts.plugins.legend = { display: false };
+  hOpts.interaction = { mode: 'nearest', axis: 'y', intersect: false };
+  hOpts.scales = { x: { ...hOpts.scales.y }, y: { ...hOpts.scales.x, ticks: { color: css('--ink-2') } } };
+  hOpts.onClick = (_, els) => {
+    if (cat || !els.length) return;
+    filter.value = labels[els[0].index];
+    drawCats();
+  };
+  draw('c-cats', {
+    type: 'bar',
+    data: { labels, datasets: [{
+      data: labels.map(k => sums[k]), backgroundColor: css('--s1'), borderRadius: 4, borderSkipped: 'start', maxBarThickness: 24,
+    }] },
+    options: hOpts,
+  });
+}
+
+async function loadSummary() {
+  const months = +document.getElementById('months').value;
+  const { monthly, projection, projection_basis: basis } = await api(`/summary?months=${months}`);
+
+  // Eje de meses continuo (incluye meses sin gasto)
+  const now = new Date();
+  const axis = [];
+  for (let i = months - 1; i >= 0; i--) axis.push(ym(new Date(now.getFullYear(), now.getMonth() - i, 1)));
+
+  // Top categorías del periodo; el resto se pliega en "Otros"
+  const totals = {};
+  monthly.forEach(r => totals[r.category] = (totals[r.category] || 0) + r.total);
+  const ranked = Object.keys(totals).sort((a, b) => totals[b] - totals[a]);
+  const top = ranked.length > MAX_CATS + 1 ? ranked.slice(0, MAX_CATS) : ranked.slice(0, MAX_CATS + 1);
+  const bucket = c => top.includes(c) ? c : 'Otros';
+  const cats = ranked.length > top.length ? [...top, 'Otros'] : top;
+  const color = c => css(c === 'Otros' ? '--s8' : SERIES[top.indexOf(c) % SERIES.length]);
+
+  const byMonthCat = {};
+  monthly.forEach(r => {
+    const k = `${r.month}|${bucket(r.category)}`;
+    byMonthCat[k] = (byMonthCat[k] || 0) + r.total;
+  });
+  const surface = css('--surface');
+
+  draw('c-monthly', {
+    type: 'bar',
+    data: { labels: axis.map(monthLabel), datasets: cats.map(c => ({
+      label: c, data: axis.map(m => byMonthCat[`${m}|${c}`] || 0),
+      backgroundColor: color(c), borderColor: surface, borderWidth: { top: 2 }, borderSkipped: 'bottom',
+      maxBarThickness: 40,
+    })) },
+    options: baseOptions({ scales: { ...baseOptions().scales,
+      x: { ...baseOptions().scales.x, stacked: true }, y: { ...baseOptions().scales.y, stacked: true } } }),
+  });
+
+  const thisMonth = ym(now);
+  const prevMonth = ym(new Date(now.getFullYear(), now.getMonth() - 1, 1));
+  currentMonth = monthly.filter(r => r.month === thisMonth);
+  document.getElementById('cat-title').textContent = `Categorías de ${monthLabel(thisMonth)}`;
+  const filter = document.getElementById('cat-filter');
+  const selected = filter.value;
+  const monthCats = [...new Set(currentMonth.map(r => r.category))].sort();
+  filter.replaceChildren(el('option', { value: '', textContent: 'Todas las categorías' }),
+    ...monthCats.map(c => el('option', { value: c, textContent: `${c} › subcategorías` })));
+  filter.value = monthCats.includes(selected) ? selected : '';
+  drawCats();
+
+  // Donas del mes actual, una por débito y otra por crédito. Mismos colores por categoría que
+  // el gráfico mensual ("Otros" en gris al final) para poder compararlas.
+  const monthTotal = currentMonth.reduce((a, r) => a + r.total, 0);
+  document.getElementById('pie-title').textContent = `Distribución de ${monthLabel(thisMonth)}: débito vs crédito`;
+  for (const [kind, isCredit, label] of [['debit', 0, 'Débito'], ['credit', 1, 'Crédito']]) {
+    const sums = {};
+    currentMonth.filter(r => r.is_credit === isCredit)
+      .forEach(r => sums[bucket(r.category)] = (sums[bucket(r.category)] || 0) + r.total);
+    const labels = Object.keys(sums).sort((a, b) => (a === 'Otros') - (b === 'Otros') || sums[b] - sums[a]);
+    const total = labels.reduce((a, c) => a + sums[c], 0);
+    const pct = v => `${Math.round(v / total * 100)}%`;
+    document.getElementById(`pie-${kind}-title`).textContent = `${label} · ${clp.format(total)}`
+      + (monthTotal ? ` (${Math.round(total / monthTotal * 100)}% del mes)` : '');
+    draw(`c-pie-${kind}`, {
+      type: 'doughnut',
+      data: { labels, datasets: [{
+        data: labels.map(c => sums[c]), backgroundColor: labels.map(color),
+        borderColor: surface, borderWidth: 2, hoverOffset: 6,
+      }] },
+      options: {
+        responsive: true, maintainAspectRatio: false, animation: false, cutout: '55%',
+        plugins: {
+          legend: { position: 'right', labels: {
+            color: css('--ink-2'), boxWidth: 12, boxHeight: 12,
+            // Etiqueta directa con % para no depender solo del color
+            generateLabels: chart => Chart.overrides.doughnut.plugins.legend.labels.generateLabels(chart)
+              .map(l => ({ ...l, text: `${l.text} · ${pct(sums[labels[l.index]])}`, fontColor: css('--ink-2') })),
+          } },
+          tooltip: { callbacks: { label: c => `${c.label}: ${clp.format(c.parsed)} (${pct(c.parsed)})` } },
+        },
+      },
+    });
+  }
+
+  const projMonths = Object.keys(projection);
+  const pOpts = baseOptions();
+  pOpts.plugins.legend = { display: false };
+  draw('c-proj', {
+    type: 'bar',
+    data: { labels: projMonths.map(monthLabel), datasets: [{
+      data: projMonths.map(m => projection[m]), backgroundColor: css('--s1'), borderRadius: 4, borderSkipped: 'bottom', maxBarThickness: 40,
+    }] },
+    options: pOpts,
+  });
+
+  const sum = m => monthly.filter(r => r.month === m).reduce((a, r) => a + r.total, 0);
+  document.getElementById('kpi-month').textContent = clp.format(sum(thisMonth));
+  document.getElementById('kpi-prev').textContent = clp.format(sum(prevMonth));
+  const savings = m => monthly.filter(r => r.month === m && r.category === SAVINGS_CATEGORY).reduce((a, r) => a + r.total, 0);
+  document.getElementById('kpi-savings').textContent = clp.format(savings(thisMonth));
+  document.getElementById('kpi-savings-prev').textContent = `mes anterior ${clp.format(savings(prevMonth))}`;
+  // Próximo pago: el mes del próximo vencimiento según estado de cuenta; sin estado, el mes siguiente
+  const day = iso => iso.split('-').reverse().slice(0, 2).join('-');
+  const dues = basis.filter(b => b.payment_due).map(b => b.payment_due).sort();
+  const nextPayMonth = dues.length ? dues[0].slice(0, 7) : ym(new Date(now.getFullYear(), now.getMonth() + 1, 1));
+  document.getElementById('kpi-next-label').textContent =
+    dues.length ? `Próximo pago de tarjeta · vence ${day(dues[0])}` : 'Cuotas próximo mes';
+  document.getElementById('kpi-next').textContent = clp.format(projection[nextPayMonth] || 0);
+  document.getElementById('kpi-debt').textContent = clp.format(projMonths.reduce((a, m) => a + projection[m], 0));
+  document.getElementById('proj-basis').textContent = basis.map(b => b.next_cut
+    ? `${b.card_type}: próximo pago ${day(b.payment_due)} (corte ${day(b.payment_cut)}); próximo corte ${day(b.next_cut)}. Fechas según tus estados de cuenta, estimadas después del último.`
+    : `${b.card_type}: sin estado de cuenta cargado, estimado por mes de compra.`).join(' ');
+
+}
+
+document.getElementById('months').onchange = loadSummary;
+document.getElementById('cat-filter').onchange = drawCats;
+matchMedia('(prefers-color-scheme: dark)').onchange = loadSummary;
+
+loadSummary().catch(err => alert(err.message));
+</script>
+</body>
+</html>

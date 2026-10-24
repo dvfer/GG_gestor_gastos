@@ -1,0 +1,241 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>GG · Movimientos</title>
+<link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+<nav><h1>GG · Gestor de Gastos</h1><a href="/dashboard">Dashboard</a><a href="/movements" aria-current="page">Movimientos</a><a href="/statements-view">Estados de cuenta</a><a href="/config">Configuración</a></nav>
+
+<div class="grid">
+  <div class="card wide">
+    <form class="inline" id="filters" onsubmit="return false">
+      <label>Ver <select name="view">
+        <option value="movements">Movimientos</option>
+        <option value="merchants">Comercios únicos</option>
+      </select></label>
+      <label>Desde <input type="date" name="from"></label>
+      <label>Hasta <input type="date" name="to"></label>
+      <label>Comercio <input type="search" name="q" placeholder="contiene…"></label>
+      <label>Categoría <select name="category"></select></label>
+      <label>Tarjeta <select name="card"></select></label>
+      <button type="reset">Limpiar</button>
+    </form>
+    <p class="muted"><strong id="summary"></strong> <span id="status"></span></p>
+
+    <div id="view-movements">
+      <p class="muted">Haz clic en una fila para ver el correo original. Cambia la categoría o el número de cuotas; se guarda al salir del campo. Categoría vacía = usar <a href="/config">reglas</a> (la subcategoría siempre va con su categoría). Las compras en US$ se listan aquí pero no se suman en los gráficos (se facturan aparte).</p>
+      <table>
+        <thead><tr><th id="th-date"><button class="sort" data-key="date">Fecha</button></th><th>Comercio</th><th>Tarjeta</th><th id="th-amount" class="num"><button class="sort" data-key="amount">Monto</button></th><th>Categoría</th><th>Subcategoría</th><th class="num">Cuotas</th></tr></thead>
+        <tbody id="movements"></tbody>
+      </table>
+    </div>
+
+    <div id="view-merchants" hidden>
+      <p class="muted">Comercios de los movimientos filtrados, de más a menos frecuente. Ajusta el patrón (ej. "TOTTUS" en vez de "TOTTUS SAN FELIPE") para que la regla cubra todas las sucursales.
+        Tip: filtra por "Sin categoría" para ver solo lo que falta clasificar.</p>
+      <table>
+        <thead><tr><th>Comercio</th><th class="num">Movs.</th><th class="num">Total</th><th>Categoría actual</th><th>Nueva regla: patrón</th><th>Categoría</th><th>Subcategoría</th><th></th></tr></thead>
+        <tbody id="merchants"></tbody>
+      </table>
+    </div>
+  </div>
+</div>
+<dialog id="email-dialog" aria-labelledby="email-subject">
+  <form method="dialog" class="dialog-head">
+    <h2 id="email-subject"></h2>
+    <button aria-label="Cerrar">✕</button>
+  </form>
+  <p><a id="email-gmail" target="_blank" rel="noopener">Abrir en Gmail ↗</a> <span id="email-id" class="muted"></span></p>
+  <pre id="email-body"></pre>
+</dialog>
+<datalist id="categories"></datalist>
+<datalist id="subcategories"></datalist>
+
+<script src="/static/common.js"></script>
+<script>
+const clp = new Intl.NumberFormat('es-CL', { style: 'currency', currency: 'CLP', maximumFractionDigits: 0 });
+const usd = new Intl.NumberFormat('es-CL', { style: 'currency', currency: 'USD' });
+const form = document.getElementById('filters');
+const statusEl = document.getElementById('status');
+let all = [];
+let subIndex = {};
+
+// ponytail: filtra en el navegador sobre todo el ledger; pasar los filtros a /expenses si supera ~10k movimientos
+async function loadMovements() {
+  const [{ data }, rules] = await Promise.all([api('/expenses?limit=10000'), api('/rules')]);
+  all = data;
+  const uniq = values => [...new Set(values.filter(v => v && v !== 'Sin categoría'))].sort();
+  const fill = (id, values) => document.getElementById(id).replaceChildren(...uniq(values).map(v => el('option', { value: v })));
+  fill('categories', [...rules, ...data].map(x => x.category));
+  subIndex = subcategoryIndex([...rules, ...data]);
+
+  const options = (select, first, values) => {
+    const keep = select.value;
+    select.replaceChildren(...first.map(([value, textContent]) => el('option', { value, textContent })),
+      ...values.map(([value, textContent]) => el('option', { value, textContent })));
+    select.value = [...select.options].some(o => o.value === keep) ? keep : '';
+  };
+  options(form.category, [['', 'Todas'], ['Sin categoría', 'Sin categoría']], uniq(data.map(m => m.category)).map(c => [c, c]));
+  const cards = new Map(data.filter(m => m.card_type).map(m => [m.card_type, m.card_label ?? m.card_type]));
+  options(form.card, [['', 'Todas']], [...cards].sort());
+  render();
+}
+
+function filtered() {
+  const f = Object.fromEntries(new FormData(form));
+  const q = f.q.trim().toLowerCase();
+  return all.filter(m => {
+    const day = (m.occurred_at ?? m.created_at).slice(0, 10);
+    return (!f.from || day >= f.from) && (!f.to || day <= f.to)
+      && (!q || `${m.merchant ?? ''} ${m.memo ?? ''}`.toLowerCase().includes(q))
+      && (!f.category || m.category === f.category)
+      && (!f.card || m.card_type === f.card);
+  });
+}
+
+function money(rows) {
+  const sum = cur => rows.filter(m => m.currency === cur).reduce((a, m) => a + m.amount, 0);
+  const usdTotal = sum('USD');
+  return clp.format(sum('CLP')) + (usdTotal ? ` + ${usd.format(usdTotal)}` : '');
+}
+
+function render() {
+  const rows = filtered();
+  const view = form.view.value;
+  document.getElementById('view-movements').hidden = view !== 'movements';
+  document.getElementById('view-merchants').hidden = view !== 'merchants';
+  const merchants = Map.groupBy(rows, m => m.merchant ?? '—');
+  document.getElementById('summary').textContent =
+    `${rows.length} movimientos · ${merchants.size} comercios · ${money(rows)}`;
+  if (view === 'movements') renderMovements(rows); else renderMerchants(merchants);
+}
+
+async function patch(m, body) {
+  try {
+    await api(`/movements/${m.id}`, { method: 'PATCH', body: JSON.stringify(body) });
+    statusEl.textContent = 'Guardado ✓';
+  } catch (err) { return alert(err.message); }
+  if (body.category === '') return loadMovements();  // volvió a las reglas: recargar los valores efectivos
+  Object.assign(m, body.category === undefined ? body : { category: body.category, subcategory: body.subcategory || null });
+}
+
+// Orden de la tabla: por fecha (default, más reciente primero) o por monto (mayor primero; clic de nuevo invierte)
+const sort = { key: 'date', dir: -1 };
+const sortKeys = {
+  date: m => m.occurred_at ?? m.created_at,
+  // ponytail: sin tipo de cambio, los US$ van en bloque después de los CLP; convertir si hace falta mezclarlos
+  amount: m => [m.currency === 'USD' ? 0 : 1, m.amount],
+};
+const cmp = (a, b) => Array.isArray(a) ? cmp(a[0], b[0]) || cmp(a[1], b[1]) : (a > b) - (a < b);
+
+document.querySelectorAll('button.sort').forEach(b => b.onclick = () => {
+  sort.dir = sort.key === b.dataset.key ? -sort.dir : -1;
+  sort.key = b.dataset.key;
+  render();
+});
+
+function renderMovements(rows) {
+  rows = [...rows].sort((a, b) => sort.dir * cmp(sortKeys[sort.key](a), sortKeys[sort.key](b)));
+  for (const key of Object.keys(sortKeys)) {
+    const th = document.getElementById(`th-${key}`);
+    const active = sort.key === key;
+    th.setAttribute('aria-sort', active ? (sort.dir < 0 ? 'descending' : 'ascending') : 'none');
+    th.querySelector('button').dataset.arrow = active ? (sort.dir < 0 ? '↓' : '↑') : '↕';
+  }
+  document.getElementById('movements').replaceChildren(...rows.map(m => {
+    const cat = el('input', { value: m.category === 'Sin categoría' ? '' : m.category, placeholder: m.category });
+    cat.setAttribute('list', 'categories');
+    cat.setAttribute('aria-label', `Categoría de ${m.merchant ?? 'movimiento'}`);
+    const sub = el('input', { value: m.subcategory ?? '', placeholder: '—' });
+    linkSubcategory(sub, () => cat.value || (m.category === 'Sin categoría' ? '' : m.category), () => subIndex);
+    sub.setAttribute('aria-label', `Subcategoría de ${m.merchant ?? 'movimiento'}`);
+    // Se guardan en par; una subcategoría sin categoría toma la categoría efectiva (la de la regla)
+    cat.onchange = sub.onchange = () => patch(m, { category: cat.value || (sub.value && m.category !== 'Sin categoría' ? m.category : ''), subcategory: sub.value });
+    let cuotas = el('span', { className: 'muted', textContent: '—' });
+    if (m.is_credit) {
+      cuotas = el('input', { type: 'number', min: 1, max: 48, value: m.installments });
+      cuotas.setAttribute('aria-label', `Cuotas de ${m.merchant ?? 'movimiento'}`);
+      cuotas.onchange = () => cuotas.checkValidity() && patch(m, { installments: +cuotas.value });
+    }
+    const row = el('tr', {},
+      el('td', { textContent: m.occurred_at ?? m.created_at }),
+      el('td', {}, m.merchant ?? '—', ...(m.memo ? [el('div', { className: 'muted', textContent: m.memo })] : [])),
+      el('td', { textContent: `${m.card_label ?? m.card_type ?? ''} · ${m.is_credit ? 'crédito' : 'débito'}` }),
+      el('td', { className: 'num', textContent: (m.currency === 'USD' ? usd : clp).format(m.amount) }),
+      el('td', {}, cat),
+      el('td', {}, sub),
+      el('td', { className: 'num' }, cuotas));
+    if (m.has_email) {
+      row.className = 'clickable';
+      row.tabIndex = 0;
+      row.title = 'Ver correo original';
+      // Clic en la fila abre el correo, salvo que sea sobre un campo editable
+      // Ojo: un handler on* que devuelve false cancela el evento (bloqueaba escribir en los inputs)
+      row.onclick = e => { if (!e.target.closest('input, select, button, a')) openEmail(m); };
+      row.onkeydown = e => { if (e.key === 'Enter' && e.target === row) openEmail(m); };
+    }
+    return row;
+  }));
+}
+
+async function openEmail(m) {
+  try {
+    const e = await api(`/movements/${m.id}/email`);
+    document.getElementById('email-subject').textContent = e.subject ?? '(sin asunto)';
+    document.getElementById('email-body').textContent = e.body;  // texto, nunca HTML del correo
+    const link = document.getElementById('email-gmail');
+    link.hidden = !e.gmail_url;
+    link.href = e.gmail_url ?? '';
+    document.getElementById('email-id').textContent = e.message_id ?? '';
+    document.getElementById('email-dialog').showModal();
+  } catch (err) { alert(err.message); }
+}
+
+function renderMerchants(merchants) {
+  const sorted = [...merchants].sort(([, a], [, b]) => b.length - a.length);
+  document.getElementById('merchants').replaceChildren(...sorted.map(([merchant, rows]) => {
+    const cats = [...new Set(rows.map(m => m.subcategory ? `${m.category} › ${m.subcategory}` : m.category))];
+    const input = (value, list, label) => {
+      const i = el('input', { value, maxLength: 60 });
+      if (list) i.setAttribute('list', list);
+      i.setAttribute('aria-label', `${label} para ${merchant}`);
+      return i;
+    };
+    const pattern = input(merchant === '—' ? '' : merchant, null, 'Patrón');
+    const category = input('', 'categories', 'Categoría');
+    const subcategory = input('', null, 'Subcategoría');
+    linkSubcategory(subcategory, () => category.value, () => subIndex);
+    const save = el('button', { textContent: 'Crear regla' });
+    save.onclick = async () => {
+      if (pattern.value.trim().length < 2 || !category.value.trim()) return alert('Completa patrón (mín. 2 letras) y categoría');
+      try {
+        await api('/rules', { method: 'PUT', body: JSON.stringify(
+          { pattern: pattern.value, category: category.value, subcategory: subcategory.value }) });
+        statusEl.textContent = `Regla "${pattern.value.trim()}" → ${category.value.trim()} creada ✓`;
+        await loadMovements();
+      } catch (err) { alert(err.message); }
+    };
+    return el('tr', {},
+      el('td', { textContent: merchant }),
+      el('td', { className: 'num', textContent: rows.length }),
+      el('td', { className: 'num', textContent: money(rows) }),
+      el('td', { className: cats.length === 1 && cats[0] === 'Sin categoría' ? 'muted' : '',
+                 textContent: cats.length === 1 ? cats[0] : `Varias (${cats.length})`, title: cats.join(', ') }),
+      el('td', {}, pattern), el('td', {}, category), el('td', {}, subcategory), el('td', {}, save));
+  }));
+}
+
+// Por defecto, desde el inicio del mes actual ("Limpiar" vuelve a este valor; bórralo para ver todo)
+const now = new Date();
+form.from.defaultValue = form.from.value =
+  `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-01`;
+
+form.oninput = render;
+form.onreset = () => setTimeout(render);  // el reset limpia los campos después del evento
+loadMovements().catch(err => alert(err.message));
+</script>
+</body>
+</html>

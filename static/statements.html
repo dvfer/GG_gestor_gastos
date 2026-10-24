@@ -1,0 +1,138 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>GG · Estados de cuenta</title>
+<link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+<nav><h1>GG · Gestor de Gastos</h1><a href="/dashboard">Dashboard</a><a href="/movements">Movimientos</a><a href="/statements-view" aria-current="page">Estados de cuenta</a><a href="/config">Configuración</a></nav>
+
+<div class="grid">
+  <div class="card wide">
+    <h2>Subir estado de cuenta</h2>
+    <form class="inline" id="upload">
+      <input type="file" name="pdf" accept=".pdf,application/pdf" required aria-label="PDF del estado de cuenta">
+      <button>Subir y conciliar</button>
+      <span id="upload-status" class="muted"></span>
+    </form>
+    <p class="muted">El PDF que llega cada mes a tu correo ("Estado de Cuenta Tarjeta de Crédito"). Se descifra con PDF_PASSWORD del servidor.
+      Subir de nuevo el mismo estado lo reemplaza. Las compras en cuotas que calcen actualizan sus cuotas en el ledger.</p>
+  </div>
+
+  <div class="card wide" id="report" hidden>
+    <div class="toolbar">
+      <h2 style="margin:0">Conciliación</h2>
+      <select id="pick" aria-label="Estado de cuenta"></select>
+    </div>
+    <div class="tiles" id="tiles"></div>
+    <div id="sections"></div>
+    <h3>En el ledger pero no en el estado</h3>
+    <p class="muted">Movimientos de la tarjeta dentro del período que el banco no facturó: validaciones de tarjeta que el comercio anuló
+      (montos chicos), compras que quedaron para el próximo corte, o compras canceladas.</p>
+    <table>
+      <thead><tr><th>Fecha</th><th>Comercio</th><th>Categoría</th><th class="num">Monto</th></tr></thead>
+      <tbody id="ledger-only"></tbody>
+    </table>
+  </div>
+</div>
+
+<script src="/static/common.js"></script>
+<script>
+const fmt = { CLP: new Intl.NumberFormat('es-CL', { style: 'currency', currency: 'CLP', maximumFractionDigits: 0 }),
+              USD: new Intl.NumberFormat('es-CL', { style: 'currency', currency: 'USD' }) };
+const day = iso => iso ? iso.slice(0, 10).split('-').reverse().join('-') : '—';
+const KIND = { compra: 'Compra', cuotas: 'Cuotas', pago: 'Pago', cargo: 'Cargo del banco' };
+const pick = document.getElementById('pick');
+
+async function loadList(select) {
+  const sts = await api('/statements');
+  const groups = new Map();
+  sts.forEach(s => groups.set(`${s.card_type}|${s.statement_date}`, s));
+  document.getElementById('report').hidden = !groups.size;
+  pick.replaceChildren(...[...groups.values()].map(s => el('option', {
+    value: `${s.card_type}|${s.statement_date}`, textContent: `${s.card_type} · facturado ${day(s.statement_date)}` })));
+  if (select) pick.value = select;
+  if (groups.size) await loadReport();
+}
+
+function tile(label, value) {
+  return el('div', { className: 'card tile' }, el('div', { className: 'label', textContent: label }),
+    el('div', { className: 'value', textContent: value }));
+}
+
+async function loadReport() {
+  const [card, date] = pick.value.split('|');
+  const r = await api(`/statements/reconciliation?card_type=${encodeURIComponent(card)}&statement_date=${date}`);
+  const nat = r.sections[0];
+  const billable = r.sections.flatMap(s => s.lines.filter(l => l.kind === 'compra' || l.kind === 'cuotas'));
+  const missing = r.sections.flatMap(s => s.lines.filter(l => l.kind !== 'pago' && !l.movement));
+  document.getElementById('tiles').replaceChildren(
+    tile('Total facturado', r.sections.map(s => fmt[s.currency].format(s.total)).join(' + ')),
+    tile('Pagar hasta', day(nat.due_date)),
+    tile('Período', `${day(nat.period_from)} → ${day(nat.period_to)}`),
+    tile('Compras conciliadas', `${billable.filter(l => l.movement).length} de ${billable.length}`),
+    tile('Faltan en el ledger', `${missing.length} líneas`),
+    tile('Solo en el ledger', `${r.ledger_only.length} movimientos`),
+  );
+  document.getElementById('sections').replaceChildren(...r.sections.map(section));
+  document.getElementById('ledger-only').replaceChildren(...r.ledger_only.map(m => el('tr', {},
+    el('td', { textContent: day(m.occurred_at) }), el('td', { textContent: m.merchant ?? '—' }),
+    el('td', { textContent: m.category }), el('td', { className: 'num', textContent: fmt[m.currency].format(m.amount) }))));
+}
+
+function section(s) {
+  const f = fmt[s.currency];
+  const check = s.check.ok
+    ? el('p', { className: 'muted', textContent: `✓ Las líneas leídas suman el total del PDF (${f.format(s.total)}).` })
+    : el('p', { textContent: `⚠ Las líneas leídas suman ${f.format(s.check.parsed)} y el PDF dice ${f.format(s.total)}: el parser se saltó algo, revisa el PDF.` });
+  return el('div', {},
+    el('h3', { textContent: s.currency === 'CLP' ? 'Nacional (CLP)' : 'Internacional (US$)' }), check,
+    el('table', {},
+      el('thead', {}, el('tr', {}, ...['Fecha', 'Descripción', 'Tipo', 'Cuota', 'Monto', 'Cargo del mes', 'Conciliación']
+        .map((t, i) => el('th', { className: i === 4 || i === 5 ? 'num' : '', textContent: t })))),
+      el('tbody', {}, ...s.lines.map(l => el('tr', {},
+        el('td', { textContent: day(l.op_date) }),
+        el('td', { textContent: l.description }),
+        el('td', { textContent: KIND[l.kind] }),
+        el('td', { textContent: l.installments > 1 ? `${l.installment_n}/${l.installments}` : '' }),
+        el('td', { className: 'num', textContent: f.format(l.amount) }),
+        el('td', { className: 'num', textContent: f.format(l.installment_amount) }),
+        el('td', {}, status(l)))))));
+}
+
+function status(l) {
+  if (l.kind === 'pago') return el('span', { className: 'muted', textContent: '— pago a la tarjeta' });
+  if (l.movement) {
+    const m = l.movement;
+    return el('span', { textContent: `✓ ${m.merchant ?? ''} (${day(m.occurred_at)}) · ${m.category}` });
+  }
+  const add = el('button', { textContent: 'Agregar al ledger' });
+  add.onclick = async () => {
+    try {
+      await api(`/statement-lines/${l.id}/movement`, { method: 'POST' });
+      await loadReport();
+    } catch (err) { alert(err.message); }
+  };
+  return el('span', {}, '⚠ No está en el ledger ', add);
+}
+
+document.getElementById('upload').onsubmit = async e => {
+  e.preventDefault();
+  const file = e.target.pdf.files[0];
+  const out = document.getElementById('upload-status');
+  out.textContent = 'Procesando…';
+  try {
+    const r = await api('/statements', { method: 'POST', body: file, headers: { 'Content-Type': 'application/pdf' } });
+    const checks = r.checks.map(c => `${c.currency} ${c.ok ? '✓' : '⚠ no cuadra'}`).join(', ');
+    out.textContent = `Cargado el estado facturado el ${day(r.statement_date)} (totales: ${checks}). Cuotas actualizadas en el ledger: ${r.installments_updated}.`;
+    e.target.reset();
+    await loadList(`${r.card_type}|${r.statement_date}`);
+  } catch (err) { out.textContent = ''; alert(err.message); }
+};
+pick.onchange = loadReport;
+loadList().catch(err => alert(err.message));
+</script>
+</body>
+</html>

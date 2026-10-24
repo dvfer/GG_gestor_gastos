@@ -1,0 +1,29 @@
+services:
+  # API + dashboard (/dashboard) + ingesta IMAP en el mismo proceso, sobre un ledger SQLite
+  backend:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    ports:
+      # ponytail: solo localhost porque /dashboard y la edición no tienen auth; agregar login antes de exponerlo
+      - "127.0.0.1:8080:8080"
+    environment:
+      IMAP_USER: ${IMAP_USER:-}
+      IMAP_APP_PASSWORD: ${IMAP_APP_PASSWORD:-}
+      IMAP_FOLDER: ${IMAP_FOLDER:-INBOX}
+      IMAP_POLL_INTERVAL_SECONDS: ${IMAP_POLL_INTERVAL_SECONDS:-60}
+      # Clave de los PDF de estado de cuenta (4 últimos dígitos del RUT, sin DV)
+      PDF_PASSWORD: ${PDF_PASSWORD:-}
+      # Bot de Telegram para categorizar (opcional)
+      TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN:-}
+      TELEGRAM_CHAT_ID: ${TELEGRAM_CHAT_ID:-}
+      TELEGRAM_DAILY_AT: ${TELEGRAM_DAILY_AT:-21:00}
+      # Hora local: define el "día" de los movimientos y la hora del resumen de Telegram
+      TZ: ${TZ:-America/Santiago}
+    volumes:
+      - gg_data:/data
+      - ./imap/config.json:/app/imap/config.json:ro
+    restart: unless-stopped
+
+volumes:
+  gg_data:

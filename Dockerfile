@@ -1,23 +1,21 @@
-# Usa una imagen oficial de Python como base
 FROM python:3.11-slim
 
-# Establece el directorio de trabajo
 WORKDIR /app
 
-# Copia los archivos de dependencias
 COPY requirements.txt .
-
-# Instala las dependencias
 RUN pip install --no-cache-dir -r requirements.txt
 
-# Copia el código de la aplicación
-COPY main.py .
+# pdftotext para leer los estados de cuenta en PDF
+RUN apt-get update && apt-get install -y --no-install-recommends poppler-utils && rm -rf /var/lib/apt/lists/*
 
-# Expone el puerto que usa Cloud Run
+COPY main.py parser.py statement.py telegram_bot.py .
+COPY db ./db
+COPY imap ./imap
+COPY static ./static
+
+# Archivo SQLite del ledger (montar un volumen en /data para persistirlo)
+ENV DB_PATH=/data/gg.db
+RUN mkdir -p /data
+
 EXPOSE 8080
-
-# Variable de entorno para el puerto (Cloud Run la configura automáticamente)
-ENV PORT=8080
-
-# Comando para ejecutar la aplicación
 CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8080"]
