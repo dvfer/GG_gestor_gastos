@@ -56,3 +56,6 @@ gg-config*.json
 
 # Configuración local de Claude Code / openspec
 .claude/
+
+# Ajustes de despliegue propios de cada servidor
+docker-compose.override.yml
