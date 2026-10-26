@@ -197,6 +197,8 @@ async def poll_loop() -> None:
     while True:
         try:
             await asyncio.to_thread(_poll_once)
+        except OSError as e:  # red caída: una línea, sin traceback
+            logger.warning("Sin conexión IMAP (%s), reintentando", e)
         except Exception:
             logger.exception("Falló el ciclo de sondeo IMAP")
         await asyncio.sleep(interval)

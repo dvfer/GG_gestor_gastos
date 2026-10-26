@@ -260,6 +260,9 @@ async def _poll_loop() -> None:
                     await asyncio.to_thread(handle_update, u)
                 except Exception:
                     logger.exception("Error procesando update de Telegram")
+        except OSError as e:  # red caída / reset: una línea, sin traceback
+            logger.warning("Sin conexión con Telegram (%s), reintentando", e)
+            await asyncio.sleep(10)
         except Exception:
             logger.exception("Falló getUpdates, reintentando")
             await asyncio.sleep(10)
