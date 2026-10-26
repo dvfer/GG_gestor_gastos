@@ -125,11 +125,3 @@ def test_backfill_criteria():
     assert since == "05-Jul-2026"
     senders = [{"address": "a@bank.cl"}]
     assert imap_ingest._search_criteria(senders, f"SINCE {since}") == '(SINCE 05-Jul-2026 FROM "a@bank.cl")'
-
-
-
-def test_html_to_text():
-    html = """<html><head><title>Banco</title><style>body, table, td { color: red } .ExternalClass {}</style></head>
-    <body><img src="x"><p>Estimado(a)\r\n   Juan</p>\r\n\r\n<div> \r\n </div><table><tr><td>Nombre</td><td>Medio De Pago&nbsp;Fintoc</td></tr>
-    <tr><td>Monto</td><td>$21.431</td></tr></table><script>alert(1)</script></body></html>"""
-    assert imap_ingest.html_to_text(html) == "Estimado(a) Juan\nNombre · Medio De Pago Fintoc\nMonto · $21.431"

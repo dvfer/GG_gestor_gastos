@@ -12,10 +12,11 @@ CREATE TABLE IF NOT EXISTS movements (
     subcategory TEXT,               -- opcional; solo tiene sentido junto a category
     raw_subject TEXT,
     raw_body TEXT,
-    message_id TEXT,
-    currency TEXT NOT NULL DEFAULT 'CLP',
-    notified_at TEXT,
-    memo TEXT,                          -- detalle de transferencias (asunto/mensaje); las reglas también buscan aquí                   -- cuándo se avisó por Telegram que estaba sin categoría  -- 'CLP' | 'USD'; gráficos y cuotas solo suman CLP                -- Message-ID del correo, evita duplicados al re-ingerir
+    message_id TEXT,                    -- Message-ID del correo, evita duplicados al re-ingerir
+    currency TEXT NOT NULL DEFAULT 'CLP',  -- 'CLP' | 'USD'; gráficos y cuotas solo suman CLP
+    notified_at TEXT,                   -- cuándo se avisó por Telegram que estaba sin categoría
+    memo TEXT,                          -- detalle de transferencias (asunto/mensaje); las reglas también buscan aquí
+    note TEXT,                          -- nota libre del usuario (qué se pagó, contexto)
     created_at TEXT NOT NULL DEFAULT (datetime('now', 'localtime'))
 );
 

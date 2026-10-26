@@ -18,7 +18,7 @@
       </select></label>
       <label>Desde <input type="date" name="from"></label>
       <label>Hasta <input type="date" name="to"></label>
-      <label>Comercio <input type="search" name="q" placeholder="contiene…"></label>
+      <label>Buscar <input type="search" name="q" placeholder="comercio, detalle o nota…"></label>
       <label>Categoría <select name="category"></select></label>
       <label>Tarjeta <select name="card"></select></label>
       <button type="reset">Limpiar</button>
@@ -26,9 +26,9 @@
     <p class="muted"><strong id="summary"></strong> <span id="status"></span></p>
 
     <div id="view-movements">
-      <p class="muted">Haz clic en una fila para ver el correo original. Cambia la categoría o el número de cuotas; se guarda al salir del campo. Categoría vacía = usar <a href="/config">reglas</a> (la subcategoría siempre va con su categoría). Las compras en US$ se listan aquí pero no se suman en los gráficos (se facturan aparte).</p>
+      <p class="muted">Haz clic en una fila para abrir su correo en Gmail (pide confirmación). Cambia la categoría, las cuotas o la nota (qué se pagó, contexto); se guarda al salir del campo. Categoría vacía = usar <a href="/config">reglas</a> (la subcategoría siempre va con su categoría). Las compras en US$ se listan aquí pero no se suman en los gráficos (se facturan aparte).</p>
       <table>
-        <thead><tr><th id="th-date"><button class="sort" data-key="date">Fecha</button></th><th>Comercio</th><th>Tarjeta</th><th id="th-amount" class="num"><button class="sort" data-key="amount">Monto</button></th><th>Categoría</th><th>Subcategoría</th><th class="num">Cuotas</th></tr></thead>
+        <thead><tr><th id="th-date"><button class="sort" data-key="date">Fecha</button></th><th>Comercio</th><th>Tarjeta</th><th id="th-amount" class="num"><button class="sort" data-key="amount">Monto</button></th><th>Categoría</th><th>Subcategoría</th><th class="num">Cuotas</th><th>Nota</th></tr></thead>
         <tbody id="movements"></tbody>
       </table>
     </div>
@@ -43,13 +43,13 @@
     </div>
   </div>
 </div>
-<dialog id="email-dialog" aria-labelledby="email-subject">
-  <form method="dialog" class="dialog-head">
-    <h2 id="email-subject"></h2>
-    <button aria-label="Cerrar">✕</button>
+<dialog id="gmail-dialog" aria-labelledby="gmail-title">
+  <h2 id="gmail-title">¿Abrir el correo en Gmail?</h2>
+  <p id="gmail-detail" class="muted"></p>
+  <form method="dialog" class="dialog-actions">
+    <button value="cancel">Cancelar</button>
+    <a id="gmail-link" class="button" target="_blank" rel="noopener">Abrir en Gmail ↗</a>
   </form>
-  <p><a id="email-gmail" target="_blank" rel="noopener">Abrir en Gmail ↗</a> <span id="email-id" class="muted"></span></p>
-  <pre id="email-body"></pre>
 </dialog>
 <datalist id="categories"></datalist>
 <datalist id="subcategories"></datalist>
@@ -61,12 +61,14 @@ const usd = new Intl.NumberFormat('es-CL', { style: 'currency', currency: 'USD' 
 const form = document.getElementById('filters');
 const statusEl = document.getElementById('status');
 let all = [];
+let gmailUser = '';
 let subIndex = {};
 
 // ponytail: filtra en el navegador sobre todo el ledger; pasar los filtros a /expenses si supera ~10k movimientos
 async function loadMovements() {
-  const [{ data }, rules] = await Promise.all([api('/expenses?limit=10000'), api('/rules')]);
+  const [{ data, gmail_user }, rules] = await Promise.all([api('/expenses?limit=10000'), api('/rules')]);
   all = data;
+  gmailUser = gmail_user;
   const uniq = values => [...new Set(values.filter(v => v && v !== 'Sin categoría'))].sort();
   const fill = (id, values) => document.getElementById(id).replaceChildren(...uniq(values).map(v => el('option', { value: v })));
   fill('categories', [...rules, ...data].map(x => x.category));
@@ -90,7 +92,7 @@ function filtered() {
   return all.filter(m => {
     const day = (m.occurred_at ?? m.created_at).slice(0, 10);
     return (!f.from || day >= f.from) && (!f.to || day <= f.to)
-      && (!q || `${m.merchant ?? ''} ${m.memo ?? ''}`.toLowerCase().includes(q))
+      && (!q || `${m.merchant ?? ''} ${m.memo ?? ''} ${m.note ?? ''}`.toLowerCase().includes(q))
       && (!f.category || m.category === f.category)
       && (!f.card || m.card_type === f.card);
   });
@@ -160,6 +162,9 @@ function renderMovements(rows) {
       cuotas.setAttribute('aria-label', `Cuotas de ${m.merchant ?? 'movimiento'}`);
       cuotas.onchange = () => cuotas.checkValidity() && patch(m, { installments: +cuotas.value });
     }
+    const note = el('input', { value: m.note ?? '', placeholder: 'Agregar nota…', maxLength: 500, className: 'note' });
+    note.setAttribute('aria-label', `Nota de ${m.merchant ?? 'movimiento'}`);
+    note.onchange = () => patch(m, { note: note.value });
     const row = el('tr', {},
       el('td', { textContent: m.occurred_at ?? m.created_at }),
       el('td', {}, m.merchant ?? '—', ...(m.memo ? [el('div', { className: 'muted', textContent: m.memo })] : [])),
@@ -167,12 +172,13 @@ function renderMovements(rows) {
       el('td', { className: 'num', textContent: (m.currency === 'USD' ? usd : clp).format(m.amount) }),
       el('td', {}, cat),
       el('td', {}, sub),
-      el('td', { className: 'num' }, cuotas));
+      el('td', { className: 'num' }, cuotas),
+      el('td', {}, note));
     if (m.has_email) {
       row.className = 'clickable';
       row.tabIndex = 0;
-      row.title = 'Ver correo original';
-      // Clic en la fila abre el correo, salvo que sea sobre un campo editable
+      row.title = 'Abrir correo en Gmail';
+      // Clic en la fila abre el correo en Gmail, salvo que sea sobre un campo editable
       // Ojo: un handler on* que devuelve false cancela el evento (bloqueaba escribir en los inputs)
       row.onclick = e => { if (!e.target.closest('input, select, button, a')) openEmail(m); };
       row.onkeydown = e => { if (e.key === 'Enter' && e.target === row) openEmail(m); };
@@ -181,17 +187,18 @@ function renderMovements(rows) {
   }));
 }
 
-async function openEmail(m) {
-  try {
-    const e = await api(`/movements/${m.id}/email`);
-    document.getElementById('email-subject').textContent = e.subject ?? '(sin asunto)';
-    document.getElementById('email-body').textContent = e.body;  // texto, nunca HTML del correo
-    const link = document.getElementById('email-gmail');
-    link.hidden = !e.gmail_url;
-    link.href = e.gmail_url ?? '';
-    document.getElementById('email-id').textContent = e.message_id ?? '';
-    document.getElementById('email-dialog').showModal();
-  } catch (err) { alert(err.message); }
+// Confirmación antes de abrir (evita abrir Gmail por un clic accidental). El enlace lo pulsa el
+// usuario, así que el navegador no lo bloquea como popup. Gmail busca por Message-ID con
+// rfc822msgid:; authuser elige la cuenta si hay varias abiertas.
+const gmailDialog = document.getElementById('gmail-dialog');
+document.getElementById('gmail-link').onclick = () => gmailDialog.close();
+function openEmail(m) {
+  const id = encodeURIComponent(m.message_id.replace(/^<|>$/g, ''));
+  document.getElementById('gmail-link').href =
+    `https://mail.google.com/mail/?authuser=${encodeURIComponent(gmailUser)}#search/rfc822msgid%3A${id}`;
+  document.getElementById('gmail-detail').textContent =
+    `${m.merchant ?? '—'} · ${(m.currency === 'USD' ? usd : clp).format(m.amount)} · ${m.occurred_at ?? m.created_at}`;
+  gmailDialog.showModal();
 }
 
 function renderMerchants(merchants) {

@@ -63,3 +63,15 @@ def test_ignores_other_chats(bot):
     mid = db.insert_movement(7_000, "****3670", "FERIA", "23/10/2026 12:00", "s", "b")
     tg.handle_update({"message": {"chat": {"id": 666}, "text": "Hack", "reply_to_message": {"text": f"#{mid}"}}})
     assert db.get_movement(mid)["category"] == "Sin categoría" and bot == []
+
+
+def test_note(bot):
+    mid = db.insert_movement(12_000, "****3670", "FALABELLA", "23/10/2026 12:00", "s", "b")
+    _press(f"t|{mid}")                                  # 🗒 Nota → pide escribirla
+    method, p = bot[-2]                                 # (el último es answerCallbackQuery)
+    assert method == "sendMessage" and p["text"].startswith(tg.NOTE_PROMPT) and p["reply_markup"]["force_reply"]
+    tg.handle_update({"message": {"chat": {"id": 42}, "text": "Regalo cumpleaños Cata",
+                                  "reply_to_message": {"text": p["text"]}}})
+    m = db.get_movement(mid)
+    assert (m["note"], m["category"]) == ("Regalo cumpleaños Cata", "Sin categoría")  # la nota no toca la categoría
+    assert "🗒" in bot[-1][1]["text"] and f"x|{mid}" in str(bot[-1][1]["reply_markup"])  # sigue ofreciendo categorizar

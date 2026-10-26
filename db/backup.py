@@ -23,10 +23,11 @@ def export() -> dict:
             "version": 1,
             "rules": q("SELECT pattern, category, subcategory FROM category_rules ORDER BY pattern"),
             "cards": q("SELECT card_type, label, is_credit FROM cards ORDER BY card_type"),
-            # Solo lo editado a mano: categoría manual o cuotas > 1 (lo de reglas se recalcula solo)
+            # Solo lo editado a mano: categoría manual, cuotas > 1 o nota (lo de reglas se recalcula solo)
             "movements": q(
-                "SELECT message_id, category, subcategory, installments, merchant, occurred_at, amount "
-                "FROM movements WHERE message_id IS NOT NULL AND (category IS NOT NULL OR installments > 1) "
+                "SELECT message_id, category, subcategory, installments, note, merchant, occurred_at, amount "
+                "FROM movements WHERE message_id IS NOT NULL "
+                "AND (category IS NOT NULL OR installments > 1 OR note IS NOT NULL) "
                 "ORDER BY occurred_at"
             ),
         }
@@ -41,8 +42,8 @@ def import_(data: dict) -> dict:
     with closing(db._connect()) as conn, conn:
         for m in data["movements"]:
             cur = conn.execute(
-                "UPDATE movements SET category = ?, subcategory = ?, installments = ? WHERE message_id = ?",
-                (m["category"], m["subcategory"], m["installments"], m["message_id"]),
+                "UPDATE movements SET category = ?, subcategory = ?, installments = ?, note = ? WHERE message_id = ?",
+                (m["category"], m["subcategory"], m["installments"], m.get("note"), m["message_id"]),
             )
             applied += cur.rowcount
     return {"rules": len(data["rules"]), "cards": len(data["cards"]),

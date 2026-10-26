@@ -44,6 +44,7 @@ def init_db() -> None:
             ("category_rules", "subcategory", "TEXT"),
             ("movements", "notified_at", "TEXT"),
             ("movements", "memo", "TEXT"),
+            ("movements", "note", "TEXT"),
         ]:
             if col not in {r["name"] for r in conn.execute(f"PRAGMA table_info({table})")}:
                 conn.execute(f"ALTER TABLE {table} ADD COLUMN {col} {ddl}")
@@ -92,10 +93,10 @@ def list_movements(limit: int, offset: int, movement_id: Optional[int] = None) -
     with closing(_connect()) as conn:
         rows = conn.execute(
             f"""
-            SELECT m.id, m.amount, m.card_type, m.merchant, m.memo, m.occurred_at, {_CREDIT_SQL} AS is_credit,
+            SELECT m.id, m.amount, m.card_type, m.merchant, m.memo, m.note, m.occurred_at, {_CREDIT_SQL} AS is_credit,
                    (SELECT c.label FROM cards c WHERE c.card_type = m.card_type) AS card_label,
                    m.installments, m.currency, {_CATEGORY_SQL} AS category,
-                   {_SUBCATEGORY_SQL} AS subcategory, (m.message_id IS NOT NULL AND m.message_id NOT LIKE 'eecc:%') AS has_email, m.created_at
+                   {_SUBCATEGORY_SQL} AS subcategory, m.message_id, (m.message_id IS NOT NULL AND m.message_id NOT LIKE 'eecc:%') AS has_email, m.created_at
             FROM {_FROM_SQL}
             WHERE ? IS NULL OR m.id = ?
             ORDER BY COALESCE(m.occurred_at, m.created_at) DESC, m.id DESC
@@ -159,21 +160,14 @@ def subcategories(category: str) -> list[str]:
         )]
 
 
-def get_movement_email(movement_id: int) -> Optional[dict[str, Any]]:
-    with closing(_connect()) as conn:
-        row = conn.execute(
-            "SELECT raw_subject, raw_body, message_id FROM movements WHERE id = ?", (movement_id,)
-        ).fetchone()
-        return dict(row) if row else None
-
-
 def update_movement(
     movement_id: int,
     category: Optional[str] = None,
     installments: Optional[int] = None,
     subcategory: Optional[str] = None,
+    note: Optional[str] = None,
 ) -> bool:
-    """Actualiza categoría+subcategoría (categoría vacía = volver a las reglas) y/o cuotas."""
+    """Actualiza categoría+subcategoría (categoría vacía = volver a las reglas), cuotas y/o nota."""
     sets, params = [], []
     if category is not None:
         category = category.strip() or None
@@ -182,6 +176,9 @@ def update_movement(
     if installments is not None:
         sets.append("installments = ?")
         params.append(installments)
+    if note is not None:
+        sets.append("note = ?")
+        params.append(note.strip()[:500] or None)
     if not sets:
         return True
     with closing(_connect()) as conn, conn:

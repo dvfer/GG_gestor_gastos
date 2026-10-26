@@ -117,7 +117,7 @@ def test_backup_roundtrip(tmp_path, monkeypatch):
     db.init_db()
     mid = db.insert_movement(9_000, "****3670", "BAR", "23/10/2026 22:00", "s", "b", message_id="<m1@x>")
     db.insert_movement(1_000, "****3670", "SIN MSGID", "23/10/2026 22:00", "s", "b")
-    db.update_movement(mid, category="Ocio", subcategory="Tocata", installments=3)
+    db.update_movement(mid, category="Ocio", subcategory="Tocata", installments=3, note="regalo")
     db.upsert_rule("UBER", "Transporte", "App")
     db.upsert_card("****3670", "CRED", True)
     data = backup.export()
@@ -130,7 +130,10 @@ def test_backup_roundtrip(tmp_path, monkeypatch):
         result = backup.import_(data)
     assert result == {"rules": 1, "cards": 1, "movements_applied": 1, "movements_missing": 0}
     m = db.list_movements(10, 0)[0]
-    assert (m["category"], m["subcategory"], m["installments"], m["card_label"]) == ("Ocio", "Tocata", 3, "CRED")
+    assert (m["category"], m["subcategory"], m["installments"], m["card_label"], m["note"]) == \
+        ("Ocio", "Tocata", 3, "CRED", "regalo")
+    db.update_movement(m["id"], note="  ")  # vacío borra la nota
+    assert db.list_movements(10, 0)[0]["note"] is None
 
 
 def test_rule_matches_memo(tmp_path, monkeypatch):

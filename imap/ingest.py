@@ -8,14 +8,12 @@ no volver a leerlo en el próximo ciclo.
 
 import asyncio
 import email
-import functools
 import imaplib
 import json
 import logging
 import os
 import re
 from email.header import decode_header
-from html.parser import HTMLParser
 from email.message import Message
 from email.utils import parseaddr
 
@@ -97,55 +95,8 @@ def _decode_part(part: Message) -> str:
         return payload.decode("utf-8", errors="replace")
 
 
-class _TextExtractor(HTMLParser):
-    """HTML de correo → texto legible: bloques y filas en líneas, celdas en la misma línea."""
-
-    SKIP = {"style", "script", "head", "title"}
-    BLOCK = {"p", "div", "br", "tr", "table", "li", "ul", "ol", "h1", "h2", "h3", "h4", "h5", "h6", "hr"}
-
-    def __init__(self):
-        super().__init__(convert_charrefs=True)
-        self.parts: list[str] = []
-        self.skip = 0
-
-    def handle_starttag(self, tag, _attrs):
-        if tag in self.SKIP:
-            self.skip += 1
-        elif tag in self.BLOCK:
-            self.parts.append("\n")
-        elif tag in ("td", "th"):
-            self.parts.append("\t")
-
-    def handle_endtag(self, tag):
-        if tag in self.SKIP:
-            self.skip = max(0, self.skip - 1)
-        elif tag in self.BLOCK:
-            self.parts.append("\n")
-
-    def handle_data(self, data):
-        if not self.skip:
-            # Como en HTML: cualquier espacio/salto del código fuente es un solo espacio
-            self.parts.append(re.sub(r"\s+", " ", data))
-
-
-def html_to_text(html: str) -> str:
-    p = _TextExtractor()
-    p.feed(html)
-    p.close()
-    lines = []
-    for line in "".join(p.parts).split("\n"):
-        line = re.sub(r"[^\S\t]+|[\u200b-\u200d]+", " ", line)
-        line = re.sub(r"\s*\t[\s\t]*", " · ", line).strip(" ·")  # celdas de una fila: "Nombre · Valor"
-        if line:
-            lines.append(line)
-    return "\n".join(lines)
-
-
 def _strip_html(html: str) -> str:
-    """Texto para los parsers (sus regex esperan "Monto $X", sin separadores): solo quita etiquetas.
-
-    html_to_text es para mostrar; no usarlo aquí.
-    """
+    """Texto para los parsers: quita <style>/<script>/<head> completos y luego las etiquetas."""
     html = re.sub(r"(?is)<(style|script|head)\b.*?</\1\s*>", " ", html)
     # ponytail: naive tag strip, swap for html.parser/BeautifulSoup if a bank email breaks it
     return re.sub(r"<[^>]+>", " ", html)
@@ -173,49 +124,6 @@ def _extract_body(msg: Message) -> str:
     if html:
         return _strip_html(html)
     return ""
-
-
-def _all_mail_box(conn: imaplib.IMAP4_SSL) -> str:
-    """Carpeta "Todos" de Gmail (flag \\All; su nombre depende del idioma), o IMAP_FOLDER."""
-    _, boxes = conn.list()
-    for line in boxes or []:
-        text = line.decode(errors="replace")
-        if "\\All" in text and (m := re.search(r'"([^"]+)"$', text)):
-            return m.group(1)
-    return os.environ.get("IMAP_FOLDER", "INBOX")
-
-
-@functools.lru_cache(maxsize=64)
-def fetch_original_text(message_id: str) -> str | None:
-    """Texto legible del correo original, buscándolo en Gmail por Message-ID (solo lectura).
-
-    None si no se encuentra.
-    """
-    mid = message_id.strip().strip("<>")
-    if not re.fullmatch(r'[^\s"<>]+', mid):
-        return None
-    conn = imaplib.IMAP4_SSL(IMAP_HOST)
-    try:
-        conn.login(os.environ["IMAP_USER"], os.environ["IMAP_APP_PASSWORD"])
-        conn.select(f'"{_all_mail_box(conn)}"', readonly=True)
-        _, data = conn.search(None, "X-GM-RAW", f'"rfc822msgid:{mid}"')
-        ids = data[0].split() if data and data[0] else []
-        if not ids:
-            return None
-        _, msg_data = conn.fetch(ids[0], "(BODY.PEEK[])")
-        msg = email.message_from_bytes(msg_data[0][1])
-        parts = [p for p in msg.walk() if "attachment" not in str(p.get("Content-Disposition") or "")]
-        for wanted in ("text/html", "text/plain"):
-            part = next((p for p in parts if p.get_content_type() == wanted), None)
-            if part is not None:
-                body = _decode_part(part)
-                return html_to_text(body) if wanted == "text/html" else body.strip()
-        return None
-    finally:
-        try:
-            conn.logout()
-        except Exception:
-            pass
 
 
 def _process_message(conn: imaplib.IMAP4_SSL, msg_num: bytes, senders: list[dict] | None = None) -> None:

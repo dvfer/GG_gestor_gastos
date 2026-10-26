@@ -3,7 +3,7 @@
 Cada día a TELEGRAM_DAILY_AT (hora local, default 21:00) envía un mensaje por cada movimiento
 de hoy/ayer sin categoría, con botones de categoría → subcategoría → "📌 Siempre" (crea regla).
 "/pendientes" los envía al momento. Responder a un mensaje con "Categoría / Subcategoría"
-asigna esa categoría escrita a mano.
+asigna esa categoría escrita a mano; "🗒 Nota" pide una nota libre (qué se pagó, contexto).
 
 Solo atiende a TELEGRAM_CHAT_ID; sin él configurado, responde a quien le escriba con su chat id
 para configurarlo. Usa long polling: no expone ningún puerto.
@@ -63,7 +63,8 @@ def _describe(m: dict) -> str:
     when = (m["occurred_at"] or m["created_at"] or "")[:16]
     card = f"{m['card_label'] or m['card_type'] or ''} · {'crédito' if m['is_credit'] else 'débito'}"
     memo = f"\n📝 {html.escape(m['memo'])}" if m.get("memo") else ""
-    return (f"🧾 <b>{html.escape(m['merchant'] or '—')}</b>{memo}\n"
+    note = f"\n🗒 <i>{html.escape(m['note'])}</i>" if m.get("note") else ""
+    return (f"🧾 <b>{html.escape(m['merchant'] or '—')}</b>{memo}{note}\n"
             f"{_money(m)} · {html.escape(when)} · {html.escape(card)}\n#{m['id']}")
 
 
@@ -87,7 +88,7 @@ def _rows(buttons: list[dict], per_row: int = 3) -> list[list[dict]]:
 def _category_keyboard(mid: int) -> dict:
     cats = [c for c in db.category_counts() if _fits(f"c|{mid}|{c}")][:MAX_CATEGORY_BUTTONS]
     rows = _rows([_button(c, f"c|{mid}|{c}") for c in cats])
-    rows.append([_button("✏️ Otra", f"o|{mid}"), _button("⏭ Omitir", f"x|{mid}")])
+    rows.append([_button("✏️ Otra", f"o|{mid}"), _button("🗒 Nota", f"t|{mid}"), _button("⏭ Omitir", f"x|{mid}")])
     return {"inline_keyboard": rows}
 
 
@@ -100,8 +101,15 @@ def _subcategory_keyboard(mid: int, category: str) -> dict:
 
 
 def _done_keyboard(mid: int) -> dict:
-    return {"inline_keyboard": [[_button("📌 Siempre para este comercio", f"r|{mid}"),
-                                 _button("↩️ Cambiar", f"b|{mid}")]]}
+    return {"inline_keyboard": [[_button("📌 Siempre para este comercio", f"r|{mid}")],
+                                [_button("🗒 Nota", f"t|{mid}"), _button("↩️ Cambiar", f"b|{mid}")]]}
+
+
+def _keyboard_for(m: dict) -> dict:
+    return _category_keyboard(m["id"]) if m["category"] == "Sin categoría" else _done_keyboard(m["id"])
+
+
+NOTE_PROMPT = "🗒 Escribe una nota"  # marca del mensaje que pide la nota (se reconoce al responderlo)
 
 
 def send_pending(today: date) -> int:
@@ -156,6 +164,10 @@ def handle_callback(cq: dict) -> None:
             text=f"Responde este mensaje con <code>Categoría</code> o <code>Categoría / Subcategoría</code> "
                  f"para {html.escape(m['merchant'] or '—')}\n#{mid}",
             reply_markup={"force_reply": True, "input_field_placeholder": "Ocio / Tocata"})
+    elif action == "t":  # pedir nota libre
+        api("sendMessage", chat_id=msg["chat"]["id"], parse_mode="HTML",
+            text=f"{NOTE_PROMPT} para {html.escape(m['merchant'] or '—')} ({_money(m)}): qué se pagó, para quién…\n#{mid}",
+            reply_markup={"force_reply": True, "input_field_placeholder": "Cumpleaños de la Cata"})
     elif action == "x":  # omitir
         _edit(msg, f"{_describe(m)}\n⏭ Omitido (queda sin categoría)")
 
@@ -173,8 +185,16 @@ def handle_message(msg: dict, today_fn=date.today) -> None:
         api("sendMessage", chat_id=msg["chat"]["id"],
             text="Usa los botones de cada movimiento, responde uno con «Categoría / Subcategoría», o envía /pendientes.")
         return
-    category, _, sub = (p.strip()[:60] for p in text.partition("/"))
     mid = int(ref.group(1))
+    if replied.startswith(NOTE_PROMPT):
+        if not db.update_movement(mid, note=text):
+            api("sendMessage", chat_id=msg["chat"]["id"], text="No encontré ese movimiento.")
+            return
+        m = db.get_movement(mid)
+        api("sendMessage", chat_id=msg["chat"]["id"], parse_mode="HTML",
+            text=f"{_describe(m)}\n✅ Nota guardada", reply_markup=_keyboard_for(m))
+        return
+    category, _, sub = (p.strip()[:60] for p in text.partition("/"))
     m = _set(mid, category, sub) if category else None
     if m is None:
         api("sendMessage", chat_id=msg["chat"]["id"], text="No pude asignar esa categoría.")

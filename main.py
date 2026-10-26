@@ -10,12 +10,8 @@ Desarrollo local:
 """
 
 import asyncio
-import html
-import logging
 import os
-import re
 from typing import Optional
-from urllib.parse import quote
 
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import FileResponse, RedirectResponse
@@ -52,13 +48,16 @@ async def health_check():
 @app.get("/expenses")
 async def get_expenses(limit: int = 100, offset: int = 0):
     expenses = db.list_movements(limit=limit, offset=offset)
-    return {"status": "success", "count": len(expenses), "data": expenses}
+    # gmail_user: para que la UI abra cada correo en Gmail (authuser elige la cuenta si hay varias)
+    return {"status": "success", "count": len(expenses), "data": expenses,
+            "gmail_user": os.environ.get("IMAP_USER", "")}
 
 
 class MovementUpdate(BaseModel):
     category: Optional[str] = Field(None, max_length=60, description="Vacío = usar regla automática")
     subcategory: Optional[str] = Field(None, max_length=60, description="Se guarda junto a category")
     installments: Optional[int] = Field(None, ge=1, le=48)
+    note: Optional[str] = Field(None, max_length=500, description="Nota libre; vacío = borrar")
 
 
 class CategoryRule(BaseModel):
@@ -76,32 +75,9 @@ class CardConfig(BaseModel):
 
 @app.patch("/movements/{movement_id}")
 async def update_movement(movement_id: int, update: MovementUpdate):
-    if not db.update_movement(movement_id, update.category, update.installments, update.subcategory):
+    if not db.update_movement(movement_id, update.category, update.installments, update.subcategory, update.note):
         raise HTTPException(status_code=404, detail="Movimiento no encontrado")
     return {"status": "success"}
-
-
-@app.get("/movements/{movement_id}/email")
-async def movement_email(movement_id: int):
-    """Correo original del movimiento: asunto, texto y enlace para abrirlo en Gmail."""
-    row = db.get_movement_email(movement_id)
-    if row is None:
-        raise HTTPException(status_code=404, detail="Movimiento no encontrado")
-    # ponytail: limpieza mínima (entidades + bloques CSS de los correos HTML) solo para leerlo
-    text = re.sub(r"\{[^{}]*\}", " ", html.unescape(row["raw_body"] or ""))
-    text = re.sub(r"\s*\n\s*", "\n", re.sub(r"[ \t\u00a0]+", " ", text)).strip()
-    gmail_url = None
-    if row["message_id"]:
-        # Gmail busca por Message-ID con rfc822msgid:; authuser elige la cuenta correcta si hay varias
-        gmail_url = (f"https://mail.google.com/mail/?authuser={quote(os.environ.get('IMAP_USER', ''))}"
-                     f"#search/rfc822msgid%3A{quote(row['message_id'].strip('<>'), safe='')}")
-    # Preferir el correo original desde Gmail convertido a texto limpio; si no, el texto guardado
-    if row["message_id"] and not row["message_id"].startswith("eecc:") and ingest.is_enabled():
-        try:
-            text = await asyncio.to_thread(ingest.fetch_original_text, row["message_id"]) or text
-        except Exception:
-            logging.getLogger("gg").warning("No se pudo traer el correo original desde Gmail", exc_info=True)
-    return {"subject": row["raw_subject"], "body": text, "message_id": row["message_id"], "gmail_url": gmail_url}
 
 
 @app.get("/rules")
