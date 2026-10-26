@@ -11,8 +11,10 @@
 <nav><h1>GG · Gestor de Gastos</h1><a href="/dashboard" aria-current="page">Dashboard</a><a href="/movements">Movimientos</a><a href="/statements-view">Estados de cuenta</a><a href="/config">Configuración</a></nav>
 
 <div class="tiles">
-  <div class="card tile"><div class="label">Gasto este mes</div><div class="value" id="kpi-month">—</div></div>
-  <div class="card tile"><div class="label">Gasto mes anterior</div><div class="value" id="kpi-prev">—</div></div>
+  <div class="card tile"><div class="label">Gasto este mes</div><div class="value" id="kpi-month">—</div>
+    <div class="label split" id="kpi-month-split"></div></div>
+  <div class="card tile"><div class="label">Gasto mes anterior</div><div class="value" id="kpi-prev">—</div>
+    <div class="label split" id="kpi-prev-split"></div></div>
   <div class="card tile"><div class="label">Ahorro/Inversión este mes</div><div class="value" id="kpi-savings">—</div>
     <div class="label" id="kpi-savings-prev"></div></div>
   <div class="card tile"><div class="label" id="kpi-next-label">Próximo pago de tarjeta</div><div class="value" id="kpi-next">—</div></div>
@@ -198,7 +200,11 @@ async function loadSummary() {
     options: pOpts,
   });
 
-  const sum = m => monthly.filter(r => r.month === m).reduce((a, r) => a + r.total, 0);
+  const sum = (m, credit) => monthly.filter(r => r.month === m && (credit === undefined || r.is_credit === credit))
+    .reduce((a, r) => a + r.total, 0);
+  const split = m => `Débito ${clp.format(sum(m, 0))}\nCrédito ${clp.format(sum(m, 1))}`;
+  document.getElementById('kpi-month-split').textContent = split(thisMonth);
+  document.getElementById('kpi-prev-split').textContent = split(prevMonth);
   document.getElementById('kpi-month').textContent = clp.format(sum(thisMonth));
   document.getElementById('kpi-prev').textContent = clp.format(sum(prevMonth));
   const savings = m => monthly.filter(r => r.month === m && r.category === SAVINGS_CATEGORY).reduce((a, r) => a + r.total, 0);

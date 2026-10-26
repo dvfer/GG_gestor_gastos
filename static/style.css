@@ -60,3 +60,4 @@ dialog h2 { margin: 0 0 8px; }
 .dialog-actions { display: flex; gap: 8px; justify-content: flex-end; margin-top: 16px; }
 a.button { font: inherit; color: var(--ink); background: var(--page); border: 1px solid var(--axis); border-radius: 6px;
            padding: 4px 8px; text-decoration: none; }
+.tile .split { white-space: pre-line; font-variant-numeric: tabular-nums; margin-top: 4px; }
