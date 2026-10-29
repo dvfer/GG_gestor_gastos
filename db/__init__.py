@@ -244,6 +244,21 @@ def upsert_card(card_type: str, label: Optional[str], is_credit: bool) -> None:
         )
 
 
+def spending(start: date, end: date) -> list[dict[str, Any]]:
+    """Total y cantidad de movimientos entre start y end (inclusive), por crédito/débito y moneda."""
+    with closing(_connect()) as conn:
+        rows = conn.execute(
+            f"""
+            SELECT {_CREDIT_SQL} AS is_credit, m.currency, SUM(m.amount) AS total, COUNT(*) AS n
+            FROM movements m
+            WHERE date(COALESCE(m.occurred_at, m.created_at)) BETWEEN ? AND ?
+            GROUP BY 1, 2
+            """,
+            (start.isoformat(), end.isoformat()),
+        ).fetchall()
+        return [dict(r) for r in rows]
+
+
 def monthly_by_category(months: int) -> list[dict[str, Any]]:
     """Gasto por mes de compra, categoría y subcategoría, últimos `months` meses (monto completo, no cuotas)."""
     with closing(_connect()) as conn:

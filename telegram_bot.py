@@ -172,6 +172,38 @@ def handle_callback(cq: dict) -> None:
         _edit(msg, f"{_describe(m)}\n⏭ Omitido (queda sin categoría)")
 
 
+_PERIODS = {"anteayer": "anteayer", "ayer": "ayer", "hoy": "hoy", "semana": "esta semana", "mes": "este mes"}
+
+
+def _period(text: str, today: date) -> tuple[date, date, str] | None:
+    # ponytail: palabras clave, no lenguaje natural; "anteayer" va antes que "ayer"
+    word = next((w for w in _PERIODS if w in text), None)
+    start = {"anteayer": today - timedelta(days=2), "ayer": today - timedelta(days=1), "hoy": today,
+             "semana": today - timedelta(days=today.weekday()), "mes": today.replace(day=1)}.get(word)
+    if start is None:
+        return None
+    return start, start if word in ("anteayer", "ayer") else today, _PERIODS[word]
+
+
+def answer_spending(text: str, today: date) -> str | None:
+    """«cuánto gasté con débito hoy» → resumen. None si el texto no es una consulta de gasto."""
+    t = text.lower().replace("é", "e").replace("á", "a")
+    if "gast" not in t:
+        return None
+    period = _period(t, today)
+    if period is None:
+        return "¿De cuándo? Prueba con hoy, ayer, anteayer, semana o mes. Ej: «cuánto gasté con débito ayer»"
+    start, end, label = period
+    want = 0 if "debito" in t else 1 if "credito" in t else None
+    rows = [r for r in db.spending(start, end) if want is None or r["is_credit"] == want]
+    lines = [f"💸 Gasto {label}" + {0: " con débito", 1: " con crédito", None: ""}[want] + ":"]
+    for kind in (0, 1):
+        for r in (r for r in rows if r["is_credit"] == kind):
+            lines.append(f"{'💳 Crédito' if kind else '🏦 Débito'}: {_money({'amount': r['total'], 'currency': r['currency']})}"
+                         f" ({r['n']} mov.)")
+    return "\n".join(lines) if len(lines) > 1 else lines[0] + " nada 🎉"
+
+
 def handle_message(msg: dict, today_fn=date.today) -> None:
     text = (msg.get("text") or "").strip()
     if text.startswith("/pendientes"):
@@ -180,10 +212,13 @@ def handle_message(msg: dict, today_fn=date.today) -> None:
             api("sendMessage", chat_id=msg["chat"]["id"], text="No hay movimientos sin categoría pendientes 🎉")
         return
     replied = (msg.get("reply_to_message") or {}).get("text") or ""
+    if not replied and (reply := answer_spending(text, today_fn())):
+        api("sendMessage", chat_id=msg["chat"]["id"], text=reply)
+        return
     ref = re.search(r"(?m)^#(\d+)$", replied)
     if not ref or not text:
         api("sendMessage", chat_id=msg["chat"]["id"],
-            text="Usa los botones de cada movimiento, responde uno con «Categoría / Subcategoría», o envía /pendientes.")
+            text="Usa los botones de cada movimiento, responde uno con «Categoría / Subcategoría», o envía /pendientes. También: «cuánto gasté con débito hoy».")
         return
     mid = int(ref.group(1))
     if replied.startswith(NOTE_PROMPT):

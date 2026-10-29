@@ -75,3 +75,19 @@ def test_note(bot):
     m = db.get_movement(mid)
     assert (m["note"], m["category"]) == ("Regalo cumpleaños Cata", "Sin categoría")  # la nota no toca la categoría
     assert "🗒" in bot[-1][1]["text"] and f"x|{mid}" in str(bot[-1][1]["reply_markup"])  # sigue ofreciendo categorizar
+
+
+def test_spending_query(bot):
+    db.insert_movement(5_000, "****1111", "JUMBO", "23/10/2026 10:00", "s", "b")
+    db.insert_movement(2_500, "****1111", "CAFE", "22/10/2026 10:00", "s", "b")
+    db.insert_movement(30_000, "****2222", "LATAM", "23/10/2026 11:00", "s", "b", is_credit=True)
+    today = date(2026, 10, 23)
+
+    assert tg.answer_spending("cuánto gasté con débito hoy", today) == "💸 Gasto hoy con débito:\n🏦 Débito: $5.000 (1 mov.)"
+    assert "$2.500" in tg.answer_spending("cuanto gaste ayer", today)
+    both = tg.answer_spending("gasto del mes", today)
+    assert "$7.500 (2 mov.)" in both and "$30.000" in both
+    assert tg.answer_spending("gasté con crédito anteayer", today).endswith("nada 🎉")
+    assert tg.answer_spending("hola", today) is None
+    tg.handle_message({"chat": {"id": 42}, "text": "cuanto gaste con credito hoy"}, today_fn=lambda: today)
+    assert "$30.000" in bot[-1][1]["text"]
