@@ -64,7 +64,7 @@ CREATE TABLE IF NOT EXISTS statements (
 CREATE TABLE IF NOT EXISTS statement_lines (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     statement_id INTEGER NOT NULL REFERENCES statements(id),
-    kind TEXT NOT NULL,                 -- compra | cuotas | pago | cargo
+    kind TEXT NOT NULL,                 -- compra | cuotas | pago | cargo | devolucion
     op_date TEXT NOT NULL,
     reference TEXT,
     description TEXT,

@@ -43,7 +43,7 @@
 const fmt = { CLP: new Intl.NumberFormat('es-CL', { style: 'currency', currency: 'CLP', maximumFractionDigits: 0 }),
               USD: new Intl.NumberFormat('es-CL', { style: 'currency', currency: 'USD' }) };
 const day = iso => iso ? iso.slice(0, 10).split('-').reverse().join('-') : '—';
-const KIND = { compra: 'Compra', cuotas: 'Cuotas', pago: 'Pago', cargo: 'Cargo del banco' };
+const KIND = { compra: 'Compra', cuotas: 'Cuotas', pago: 'Pago', cargo: 'Cargo del banco', devolucion: 'Devolución' };
 const pick = document.getElementById('pick');
 
 async function loadList(select) {
@@ -67,7 +67,7 @@ async function loadReport() {
   const r = await api(`/statements/reconciliation?card_type=${encodeURIComponent(card)}&statement_date=${date}`);
   const nat = r.sections[0];
   const billable = r.sections.flatMap(s => s.lines.filter(l => l.kind === 'compra' || l.kind === 'cuotas'));
-  const missing = r.sections.flatMap(s => s.lines.filter(l => l.kind !== 'pago' && !l.movement));
+  const missing = r.sections.flatMap(s => s.lines.filter(l => l.kind !== 'pago' && l.kind !== 'cargo' && !l.movement));
   document.getElementById('tiles').replaceChildren(
     tile('Total facturado', r.sections.map(s => fmt[s.currency].format(s.total)).join(' + ')),
     tile('Pagar hasta', day(nat.due_date)),
@@ -92,7 +92,8 @@ function section(s) {
     el('table', {},
       el('thead', {}, el('tr', {}, ...['Fecha', 'Descripción', 'Tipo', 'Cuota', 'Monto', 'Cargo del mes', 'Conciliación']
         .map((t, i) => el('th', { className: i === 4 || i === 5 ? 'num' : '', textContent: t })))),
-      el('tbody', {}, ...s.lines.map(l => el('tr', {},
+      // Cargos del banco (comisiones, impuestos) solo cuentan para el total, no se muestran
+      el('tbody', {}, ...s.lines.filter(l => l.kind !== 'cargo').map(l => el('tr', {},
         el('td', { textContent: day(l.op_date) }),
         el('td', { textContent: l.description }),
         el('td', { textContent: KIND[l.kind] }),

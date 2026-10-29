@@ -89,3 +89,20 @@ def test_project_by_due():
         (99_000, "2026-08-01", 1),   # ya vencido: no se proyecta
     ], sched, date(2026, 10, 1))
     assert proj == {"2026-10": 10_000, "2026-11": 20_000, "2026-12": 10_000, "2027-01": 10_000, "2027-02": 10_000}
+
+
+def test_new_installment_purchase_section():
+    head = ("ESTADO DE CUENTA NACIONAL\nFECHA ESTADO DE CUENTA 22/10/2026\n"
+            "MONTO TOTAL FACTURADO A PAGAR ( A + B ) $   1.594\n")
+    body = (
+        "                 3.CARGOS, COMISIONES, IMPUESTOS Y ABONOS\n"
+        "             22/10/26   221000000000 COMISION ADMINISTRACION MENSUAL               $        4.944 $         4.944 01/01 $         4.944\n"
+        "             19/10/26   201081510150 LIDER.CL COMPRA DIRECTA SANTIAGO              $       -3.350 $        -3.350 01/01 $        -3.350\n"
+        "            4.INFORMACIÓN COMPRAS EN CUOTAS EN PERÍODO                                    $            0\n"
+        "QUILLOTA     07/10/26   091013320442 HEAD WB        TASA INT 2,83%            $       58.980 $            63.075   00/02 $       31.537\n"
+    )
+    st = statement._parse_national(head + body)
+    cargo, refund, head_wb = st["lines"]
+    assert (cargo["kind"], refund["kind"]) == ("cargo", "devolucion")
+    assert (head_wb["kind"], head_wb["description"], head_wb["installment_n"]) == ("cuotas", "HEAD WB", 0)
+    assert statement.check_totals(st)["ok"]  # la cuota 00/02 no se suma

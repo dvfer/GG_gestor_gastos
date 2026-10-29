@@ -83,12 +83,15 @@ def _parse_national(text: str) -> dict:
     for raw in text.splitlines():
         if "CARGOS, COMISIONES, IMPUESTOS Y ABONOS" in raw or "VOLUNTARIAMENTE CONTRATADOS" in raw:
             section = "cargo"  # comisiones, impuestos, seguros: los cobra el banco, no llegan por correo
+        if "INFORMACIÓN COMPRAS EN CUOTAS" in raw:
+            section = "compra"  # compras en cuotas nuevas (00/NN): se empiezan a cobrar el mes siguiente
         m = _NAT_LINE.match(raw)
         if not m:
             continue
-        desc = re.sub(r"\s*TASA INT\..*$", "", m["desc"]).strip()
+        desc = re.sub(r"\s*TASA INT\.?\s.*$", "", m["desc"]).strip()
         n, total_n = int(m["n"]), int(m["m"])
         kind = ("pago" if "MONTO CANCELADO" in desc else
+                "devolucion" if section == "cargo" and m["amount"].startswith("-") else
                 section if section == "cargo" else
                 "cuotas" if total_n > 1 else "compra")
         lines.append({
@@ -147,8 +150,12 @@ def parse_statement(text: str) -> list[dict]:
 
 
 def check_totals(st: dict) -> dict:
-    """Total facturado = saldo anterior + líneas (cuota del mes). Si no cuadra, faltó parsear algo."""
-    parsed = round(st["previous_total"] + sum(l["installment_amount"] for l in st["lines"]), 2)
+    """Total facturado = saldo anterior + líneas (cuota del mes). Si no cuadra, faltó parsear algo.
+
+    Las cuotas 00/NN son informativas: la primera se cobra en el estado siguiente.
+    """
+    parsed = round(st["previous_total"] + sum(l["installment_amount"] for l in st["lines"]
+                                               if l["installment_n"] >= 1), 2)
     return {"parsed": parsed, "total": st["total"], "ok": abs(parsed - st["total"]) < 0.01}
 
 
@@ -170,7 +177,7 @@ def match_lines(lines: list[dict], movements: list[dict], currency: str, toleran
     taken = taken if taken is not None else set()
     out = {}
     for i, line in enumerate(lines):
-        if line["kind"] not in ("compra", "cuotas"):
+        if line["kind"] not in ("compra", "cuotas", "devolucion"):
             continue
         d = date.fromisoformat(line["op_date"])
         amounts = _amounts(line, currency)
