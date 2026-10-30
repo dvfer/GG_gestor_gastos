@@ -108,6 +108,17 @@ def test_installment_projection_uses_statements(tmp_path, monkeypatch):
     basis = db.installment_projection(date(2026, 10, 23))[1]
     assert (basis[0]["next_cut"], basis[0]["payment_cut"], basis[0]["payment_due"]) == \
         ("2026-11-20", "2026-10-22", "2026-11-05")
+    # Con el estado del 22/10 cargado manda lo facturado: su total (no los correos previos al corte)
+    # y sus cuotas restantes (2/3 → 1 más; 00/2 → 2 más, con interés); el ledger aporta solo lo posterior
+    line = {"op_date": "2026-10-07", "reference": None, "description": "X", "amount": 0, "origin_amount": None}
+    db.save_statement({"card_type": "****3670", "currency": "CLP", "statement_date": "2026-10-22",
+                       "period_from": "2026-09-23", "period_to": "2026-10-22", "due_date": "2026-11-05",
+                       "next_period_to": "2026-11-20", "total": 400_000, "previous_total": 0, "lines": [
+                           {**line, "kind": "cuotas", "installment_n": 2, "installments": 3, "installment_amount": 10_000},
+                           {**line, "kind": "cargo", "installment_n": 0, "installments": 2, "installment_amount": 31_537}]})
+    db.insert_movement(9_000, "****3670", "NUEVA", "25/10/2026 10:00", "s", "b", is_credit=True)
+    assert db.installment_projection(date(2026, 10, 30))[0] == \
+        {"2026-10": 5_000, "2026-11": 400_000, "2026-12": 41_537 + 9_000, "2027-01": 31_537}  # 10: la otra tarjeta
 
 
 def test_backup_roundtrip(tmp_path, monkeypatch):

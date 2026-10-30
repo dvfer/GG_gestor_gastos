@@ -378,7 +378,7 @@ def installment_projection(today: Optional[date] = None) -> tuple[dict[str, floa
     Tarjetas con estados de cuenta cargados: por mes de vencimiento real/estimado (corte y
     vencimiento del estado). Sin estados: la cuota k cae k meses después del mes de compra.
     """
-    from statement import BillingSchedule, project_by_due  # import local: statement no depende de db
+    from statement import BillingSchedule, project_by_due, project_statement  # import local: statement no depende de db
 
     today = today or date.today()
     with closing(_connect()) as conn:
@@ -398,7 +398,12 @@ def installment_projection(today: Optional[date] = None) -> tuple[dict[str, floa
         card_statements = [s for s in statements if s["card_type"] == card]
         if card_statements:
             schedule = BillingSchedule(card_statements)
-            proj = project_by_due(purchases, schedule, today)
+            # Lo facturado sale del último estado (manda sobre los correos); el ledger solo aporta lo posterior al corte
+            latest = statement_group(card, max(s["statement_date"] for s in card_statements))[0]  # CLP va primero
+            proj = project_statement(latest, schedule, today)
+            later = project_by_due([p for p in purchases if p[1][:10] > latest["statement_date"]], schedule, today)
+            for k, v in later.items():
+                proj[k] = proj.get(k, 0) + v
             pay_cut, pay_due = schedule.next_payment(today)
             basis.append({"card_type": card, "next_cut": schedule.next_cut(today)[0].isoformat(),
                           "payment_cut": pay_cut.isoformat(), "payment_due": pay_due.isoformat()})
