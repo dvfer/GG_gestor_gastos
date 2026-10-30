@@ -119,6 +119,22 @@ def test_installment_projection_uses_statements(tmp_path, monkeypatch):
     db.insert_movement(9_000, "****3670", "NUEVA", "25/10/2026 10:00", "s", "b", is_credit=True)
     assert db.installment_projection(date(2026, 10, 30))[0] == \
         {"2026-10": 5_000, "2026-11": 400_000, "2026-12": 41_537 + 9_000, "2027-01": 31_537}  # 10: la otra tarjeta
+    # Pagado: el total sale de la proyección (y sobrevive a volver a subir el PDF); las cuotas siguen
+    oct_st = db.statement_group("****3670", "2026-10-22")[0]
+    # Pago por correo: parcial no alcanza, completo (antes del corte siguiente) marca pagado; dedupe por Message-ID
+    db.insert_card_payment("****3670", "CLP", 100_000, "23/10/2026 11:34", message_id="<a>")
+    db.insert_card_payment("****3670", "CLP", 100_000, "23/10/2026 11:34", message_id="<a>")
+    db.insert_card_payment("****3670", "CLP", 999_999, "21/11/2026 10:00", message_id="<b>")  # otro período
+    assert db.statement_group("****3670", "2026-10-22")[0]["paid"] is False
+    db.insert_card_payment("****3670", "CLP", 300_000, "24/10/2026 09:00", message_id="<c>")
+    assert db.installment_projection(date(2026, 10, 30))[0] == \
+        {"2026-10": 5_000, "2026-12": 41_537 + 9_000, "2027-01": 31_537}
+    with db._connect() as conn:
+        conn.execute("DELETE FROM card_payments")
+    assert db.set_statement_paid(oct_st["id"], True)
+    db.save_statement({**oct_st, "lines": oct_st["lines"]})
+    assert db.installment_projection(date(2026, 10, 30))[0] == \
+        {"2026-10": 5_000, "2026-12": 41_537 + 9_000, "2027-01": 31_537}
 
 
 def test_backup_roundtrip(tmp_path, monkeypatch):

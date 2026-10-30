@@ -57,8 +57,19 @@ CREATE TABLE IF NOT EXISTS statements (
     next_period_to TEXT,                -- próximo corte
     total NUMERIC NOT NULL,             -- monto total facturado
     previous_total NUMERIC NOT NULL DEFAULT 0,
+    paid_at TEXT,                       -- marcado como pagado a mano (el banco no avisa por correo)
     uploaded_at TEXT NOT NULL DEFAULT (datetime('now', 'localtime')),
     UNIQUE (card_type, currency, statement_date)
+);
+
+-- Pagos de tarjeta (correo "Pago de Tarjeta de Crédito"): marcan el estado como pagado
+CREATE TABLE IF NOT EXISTS card_payments (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    card_type TEXT NOT NULL,
+    currency TEXT NOT NULL,             -- CLP (nacional) | USD (internacional)
+    amount NUMERIC NOT NULL,
+    paid_at TEXT NOT NULL,              -- 'YYYY-MM-DD HH:MM'
+    message_id TEXT UNIQUE
 );
 
 CREATE TABLE IF NOT EXISTS statement_lines (

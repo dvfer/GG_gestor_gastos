@@ -67,3 +67,17 @@ def test_omite_pagos_comprobantes_y_recibidas():
         "Te informamos que nuestro(a) cliente Ana ha efectuado una transferencia de fondos a tu cuenta ... Monto $5.000",
     ]:
         assert parse_tef(body)["amount"] == 0
+
+
+def test_pago_de_tarjeta():
+    nac = ("Te informamos que se ha efectuado el pago de la tarjeta de cr&eacute;dito nacional en forma exitosa "
+           "con el siguiente detalle: N&deg; de cuenta 00-123-04567-01 Destino Tipo de tarjeta Tarjeta de Cr&eacute;dito "
+           "N&deg; de tarjeta ************3670 Utilizado $234.621 Monto $430.872 "
+           "Fecha y Hora: viernes 23 de octubre de 2026 11:34 Transacci&oacute;n: X")
+    r = parse_tef(nac)
+    assert r["amount"] == 0  # no es gasto
+    assert r["card_payment"] == {"card_type": "****3670", "currency": "CLP", "amount": 430872, "datetime": "23/10/2026 11:34"}
+    intl = ("se ha efectuado el pago de la tarjeta de cr&eacute;dito internacional en forma exitosa ... "
+            "N&ordm; de tarjeta ************3670 Utilizado USD$0,00 Detalle Monto pagado USD$23,82 Tipo de cambio $999 "
+            "Monto $23.798 Fecha y Hora: viernes 23 de octubre de 2026 11:34")
+    assert parse_tef(intl)["card_payment"] == {"card_type": "****3670", "currency": "USD", "amount": 23.82, "datetime": "23/10/2026 11:34"}

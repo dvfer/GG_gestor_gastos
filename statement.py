@@ -282,12 +282,14 @@ def project_by_due(purchases: list[tuple[float, str, int]], schedule: BillingSch
 
 
 def project_statement(st: dict, schedule: BillingSchedule, today: date) -> dict[str, float]:
-    """Lo ya facturado según el último estado: su total al vencimiento y las cuotas restantes
-    de sus líneas (incluye 00/NN, con intereses) en los vencimientos siguientes."""
+    """Lo ya facturado según el último estado: su total al vencimiento (salvo que esté pagado) y
+    las cuotas restantes de sus líneas (incluye 00/NN, con intereses) en los vencimientos siguientes."""
     out: dict[str, float] = {}
     i = schedule.cut_index(date.fromisoformat(st["statement_date"]))
-    items = [(0, float(st["total"]))] + [(k, float(l["installment_amount"])) for l in st["lines"]
-                                        for k in range(1, l["installments"] - l["installment_n"] + 1)]
+    items = [(k, float(l["installment_amount"])) for l in st["lines"]
+             for k in range(1, l["installments"] - l["installment_n"] + 1)]
+    if not st.get("paid"):
+        items.append((0, float(st["total"])))
     for k, amount in items:
         if i + k < len(schedule.cuts) and (due := schedule.due[schedule.cuts[i + k]]) >= today:
             key = due.strftime("%Y-%m")

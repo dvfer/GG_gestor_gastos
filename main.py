@@ -160,6 +160,14 @@ async def statement_reconciliation(card_type: str, statement_date: str):
     return statement.reconcile(group, db.card_movements(card_type))
 
 
+@app.put("/statements/{statement_id}/paid")
+async def mark_statement_paid(statement_id: int, paid: bool = True):
+    """Marca el estado como pagado: su total sale de la proyección (el banco no avisa el pago por correo)."""
+    if not db.set_statement_paid(statement_id, paid):
+        raise HTTPException(status_code=404, detail="Estado de cuenta no encontrado")
+    return {"status": "success"}
+
+
 @app.post("/statement-lines/{line_id}/movement")
 async def add_statement_line_to_ledger(line_id: int):
     """Agrega al ledger una línea del estado que no llegó por correo (ej. cargos PAC, comisiones)."""

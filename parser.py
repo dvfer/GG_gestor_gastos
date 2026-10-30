@@ -117,6 +117,10 @@ def parse_banco_chile_transferencias(body: str) -> dict:
               "is_credit": False, "currency": "CLP", "memo": None}
     t = ' '.join(html.unescape(body).split())
 
+    # Pago de tarjeta: no es gasto (duplicaría las compras) pero marca el estado como pagado
+    if (payment := parse_card_payment(t)):
+        return {**result, "card_payment": payment}
+
     if re.search(r'Transferencia a terceros', t, re.IGNORECASE):
         name = re.search(r'Destino Nombre y Apellido:? (.+?) (?:Rut|Tipo de Cuenta|Email|Monto)\b', t, re.IGNORECASE)
     else:
@@ -149,6 +153,24 @@ def parse_banco_chile_transferencias(body: str) -> dict:
         # ponytail: estos correos no traen hora; 00:00 basta para agrupar por mes
         result["datetime"] = f"{d.group(1)} 00:00"
     return result
+
+
+def parse_card_payment(t: str) -> dict | None:
+    """Comprobante de pago de tarjeta de crédito (nacional en $, internacional en USD$)."""
+    if not re.search(r'efectuado el pago de la tarjeta de cr[ée]dito', t, re.IGNORECASE):
+        return None
+    card = re.search(r'\*{4,}(\d{4})', t)
+    usd = re.search(r'Monto pagado USD\$([\d.,]+)', t)
+    clp = re.search(r'Monto \$([\d.]+)', t)
+    dt = re.search(r'(\d{1,2}) de ([a-záé]+) de (\d{4}) (\d{2}:\d{2})', t, re.IGNORECASE)
+    if not (card and (usd or clp) and dt and dt.group(2).lower() in _MESES):
+        return None
+    return {
+        "card_type": f"****{card.group(1)}",
+        "currency": "USD" if usd else "CLP",
+        "amount": float(usd.group(1).replace('.', '').replace(',', '.')) if usd else float(clp.group(1).replace('.', '')),
+        "datetime": f"{int(dt.group(1)):02d}/{_MESES[dt.group(2).lower()]:02d}/{dt.group(3)} {dt.group(4)}",
+    }
 
 
 PARSERS = {

@@ -45,6 +45,7 @@ def init_db() -> None:
             ("movements", "notified_at", "TEXT"),
             ("movements", "memo", "TEXT"),
             ("movements", "note", "TEXT"),
+            ("statements", "paid_at", "TEXT"),
         ]:
             if col not in {r["name"] for r in conn.execute(f"PRAGMA table_info({table})")}:
                 conn.execute(f"ALTER TABLE {table} ADD COLUMN {col} {ddl}")
@@ -287,7 +288,7 @@ def save_statement(st: dict) -> int:
     """Guarda un estado de cuenta parseado (statement.parse_statement); reemplaza si ya existía."""
     with closing(_connect()) as conn, conn:
         old = conn.execute(
-            "SELECT id FROM statements WHERE card_type = ? AND currency = ? AND statement_date = ?",
+            "SELECT id, paid_at FROM statements WHERE card_type = ? AND currency = ? AND statement_date = ?",
             (st["card_type"], st["currency"], st["statement_date"]),
         ).fetchone()
         if old:
@@ -302,7 +303,27 @@ def save_statement(st: dict) -> int:
             f"VALUES (?, {', '.join('?' * len(_LINE_COLS))})",
             [(sid, *[line.get(c) for c in _LINE_COLS]) for line in st["lines"]],
         )
+        if old and old["paid_at"]:  # volver a subir el PDF no borra el "pagado"
+            conn.execute("UPDATE statements SET paid_at = ? WHERE id = ?", (old["paid_at"], sid))
         return sid
+
+
+def insert_card_payment(card_type: str, currency: str, amount: float, datetime_str: str,
+                        message_id: Optional[str] = None) -> Optional[int]:
+    """Guarda un pago de tarjeta; None si el correo ya estaba (dedupe por Message-ID)."""
+    with closing(_connect()) as conn, conn:
+        return conn.execute(
+            "INSERT OR IGNORE INTO card_payments (card_type, currency, amount, paid_at, message_id) VALUES (?, ?, ?, ?, ?)",
+            (card_type, currency, amount, _parse_occurred_at(datetime_str), message_id),
+        ).lastrowid or None
+
+
+def set_statement_paid(statement_id: int, paid: bool) -> bool:
+    with closing(_connect()) as conn, conn:
+        return conn.execute(
+            "UPDATE statements SET paid_at = CASE WHEN ? THEN datetime('now', 'localtime') END WHERE id = ?",
+            (paid, statement_id),
+        ).rowcount > 0
 
 
 def list_statements() -> list[dict[str, Any]]:
@@ -323,6 +344,13 @@ def statement_group(card_type: str, statement_date: str) -> list[dict[str, Any]]
             st["lines"] = [dict(r) for r in conn.execute(
                 "SELECT * FROM statement_lines WHERE statement_id = ? ORDER BY id", (st["id"],)
             )]
+            # Pagado: marcado a mano o pagos por correo entre este corte y el siguiente que cubren el total
+            st["paid_amount"] = conn.execute(
+                "SELECT COALESCE(SUM(amount), 0) FROM card_payments WHERE card_type = ? AND currency = ? "
+                "AND date(paid_at) > ? AND date(paid_at) <= COALESCE(?, '9999')",
+                (card_type, st["currency"], statement_date, st["next_period_to"]),
+            ).fetchone()[0]
+            st["paid"] = bool(st["paid_at"]) or st["paid_amount"] >= st["total"]
         return sts
 
 

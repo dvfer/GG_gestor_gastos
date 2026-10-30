@@ -139,6 +139,16 @@ def _process_message(conn: imaplib.IMAP4_SSL, msg_num: bytes, senders: list[dict
 
     parser = _parser_for_sender(senders if senders is not None else _load_senders(), msg.get("From", ""))
     parsed = parser(body)
+    if (p := parsed.get("card_payment")):
+        try:
+            db.insert_card_payment(p["card_type"], p["currency"], p["amount"], p["datetime"],
+                                   message_id=(msg.get("Message-ID") or "").strip() or None)
+        except Exception:
+            logger.exception("Error guardando pago de tarjeta desde correo %r, se reintentará", subject)
+            return
+        logger.info("Pago de tarjeta guardado: %r", subject)
+        conn.store(msg_num, "+FLAGS", "\\Seen")
+        return
     if parsed["amount"] == 0:
         logger.info("Correo sin datos de transacción, se omite: %r", subject)
         conn.store(msg_num, "+FLAGS", "\\Seen")
