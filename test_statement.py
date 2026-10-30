@@ -106,3 +106,16 @@ def test_new_installment_purchase_section():
     assert (cargo["kind"], refund["kind"]) == ("cargo", "devolucion")
     assert (head_wb["kind"], head_wb["description"], head_wb["installment_n"]) == ("cuotas", "HEAD WB", 0)
     assert statement.check_totals(st)["ok"]  # la cuota 00/02 no se suma
+
+
+def test_project_statement_last_cuota_rounding():
+    from datetime import date
+    from statement import BillingSchedule, project_statement
+    st = {"statement_date": "2026-10-22", "due_date": "2026-11-05", "next_period_to": "2026-11-20",
+          "total": 1, "paid": True, "lines": [
+              # 5/6 sin interés: la 6/6 lleva el resto del redondeo
+              {"amount": 201_869, "installment_n": 5, "installments": 6, "installment_amount": 33_644},
+              # 00/2 con interés: monto (capital) no calza, la cuota queda tal cual
+              {"amount": 58_980, "installment_n": 0, "installments": 2, "installment_amount": 31_537}]}
+    proj = project_statement(st, BillingSchedule([st]), date(2026, 10, 30))
+    assert proj == {"2026-12": 33_649 + 31_537, "2027-01": 31_537}

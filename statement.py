@@ -286,8 +286,15 @@ def project_statement(st: dict, schedule: BillingSchedule, today: date) -> dict[
     las cuotas restantes de sus líneas (incluye 00/NN, con intereses) en los vencimientos siguientes."""
     out: dict[str, float] = {}
     i = schedule.cut_index(date.fromisoformat(st["statement_date"]))
-    items = [(k, float(l["installment_amount"])) for l in st["lines"]
-             for k in range(1, l["installments"] - l["installment_n"] + 1)]
+    items = []
+    for l in st["lines"]:
+        left, cuota = l["installments"] - l["installment_n"], float(l["installment_amount"])
+        items += [(k, cuota) for k in range(1, left)]
+        if left > 0:
+            # El banco cobra en la última cuota los pesos que sobran del redondeo (201.869/6 → 5×33.644 + 33.649);
+            # con interés (00/NN) el monto no calza con las cuotas y queda la cuota tal cual
+            last = float(l["amount"]) - cuota * (l["installments"] - 1)
+            items.append((left, last if abs(last - cuota) < l["installments"] else cuota))
     if not st.get("paid"):
         items.append((0, float(st["total"])))
     for k, amount in items:
