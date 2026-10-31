@@ -98,10 +98,10 @@ def test_installment_projection_uses_statements(tmp_path, monkeypatch):
     assert db.installment_projection(today)[0] == {"2026-10": 15_000, "2026-11": 10_000, "2026-12": 10_000}
     db.save_statement({"card_type": "****3670", "currency": "CLP", "statement_date": "2026-09-22",
                        "period_from": "2026-08-22", "period_to": "2026-09-22", "due_date": "2026-10-06",
-                       "next_period_to": "2026-10-22", "total": 0, "previous_total": 0, "lines": []})
+                       "next_period_to": "2026-10-22", "total": 1_000, "previous_total": 0, "lines": []})
     # Con estado: compra del 23/09 entra al corte 22/10 → vence 05/11; luego dic y ene
     proj, basis = db.installment_projection(today)
-    assert proj == {"2026-10": 5_000, "2026-11": 10_000, "2026-12": 10_000, "2027-01": 10_000}
+    assert proj == {"2026-10": 5_000 + 1_000, "2026-11": 10_000, "2026-12": 10_000, "2027-01": 10_000}
     assert basis[0] == {"card_type": "****3670", "next_cut": "2026-10-22",
                         "payment_cut": "2026-09-22", "payment_due": "2026-10-06"}
     # 23/10: el corte del 22/10 ya pasó pero vence el 05/11 → ese es el próximo pago
@@ -129,6 +129,8 @@ def test_installment_projection_uses_statements(tmp_path, monkeypatch):
     db.insert_card_payment("****3670", "CLP", 300_000, "24/10/2026 09:00", message_id="<c>")
     assert db.installment_projection(date(2026, 10, 30))[0] == \
         {"2026-10": 5_000, "2026-12": 41_537 + 9_000, "2027-01": 31_537}
+    # Pagado el del 05/11: el próximo pago es el del corte 20/11
+    assert db.installment_projection(date(2026, 10, 30))[1][0]["payment_due"] > "2026-11-05"
     with db._connect() as conn:
         conn.execute("DELETE FROM card_payments")
     assert db.set_statement_paid(oct_st["id"], True)

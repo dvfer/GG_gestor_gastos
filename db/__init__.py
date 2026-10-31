@@ -3,7 +3,7 @@
 import os
 import sqlite3
 from contextlib import closing
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 from typing import Any, Optional
 
 SCHEMA_PATH = os.path.join(os.path.dirname(__file__), "schema.sql")
@@ -433,6 +433,9 @@ def installment_projection(today: Optional[date] = None) -> tuple[dict[str, floa
             for k, v in later.items():
                 proj[k] = proj.get(k, 0) + v
             pay_cut, pay_due = schedule.next_payment(today)
+            latest_cut = date.fromisoformat(latest["statement_date"])
+            if latest["paid"] and pay_cut <= latest_cut:  # ya pagado: el próximo pago es el del corte siguiente
+                pay_cut, pay_due = schedule.next_cut(latest_cut + timedelta(days=1))
             basis.append({"card_type": card, "next_cut": schedule.next_cut(today)[0].isoformat(),
                           "payment_cut": pay_cut.isoformat(), "payment_due": pay_due.isoformat()})
         else:
