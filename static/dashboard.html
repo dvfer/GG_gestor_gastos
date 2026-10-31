@@ -158,7 +158,9 @@ async function loadSummary() {
   // Donas del mes actual, una por débito y otra por crédito. Mismos colores por categoría que
   // el gráfico mensual ("Otros" en gris al final) para poder compararlas.
   const monthTotal = currentMonth.reduce((a, r) => a + r.total, 0);
-  document.getElementById('pie-title').textContent = `Distribución de ${monthLabel(thisMonth)}: débito vs crédito`;
+  const longMonth = new Date(+thisMonth.slice(0, 4), +thisMonth.slice(5, 7) - 1, 1)
+    .toLocaleDateString('es-CL', { month: 'long', year: 'numeric' });  // "octubre de 2026" (monthLabel da "oct 26")
+  document.getElementById('pie-title').textContent = `Distribución de ${longMonth}: débito vs crédito`;
   for (const [kind, isCredit, label] of [['debit', 0, 'Débito'], ['credit', 1, 'Crédito']]) {
     const sums = {};
     currentMonth.filter(r => r.is_credit === isCredit)
